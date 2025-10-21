@@ -1,5 +1,4 @@
 <div align="center">
-  <img src="https://upload.wikimedia.org/wikipedia/commons/3/35/Shield_icon.svg" alt="Project Logo" width="120"/>
   <h1>🛡️ Privacy-Preserving Cybersecurity & Digital Phenotyping System</h1>
   <p><em>A Capstone Project at the University of Doha for Science and Technology (UDST)</em></p>
 </div>
