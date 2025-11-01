@@ -9,8 +9,11 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons as Icon } from '@expo/vector-icons';
+import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import * as Location from 'expo-location';
 import { Accelerometer, Gyroscope } from 'expo-sensors';
+import * as FileSystem from 'expo-file-system/legacy';
+import Constants from 'expo-constants';
 
 // Mock Data for App Usage
 const MOCK_APP_USAGE = [
@@ -24,7 +27,11 @@ const MOCK_APP_USAGE = [
 
 const HomeScreen = ({ totalScreenTime }) => (
   <View style={styles.contentView}>
-    <Text style={styles.contentTitle}>📊 Activity Overview</Text>
+    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      <MaterialIcons name="phone-iphone" size={28} color="#007AFF" style={{ marginRight: 8, marginBottom: 14 }} />
+      <Text style={styles.contentTitle}>Activity Overview</Text>
+    </View>
+
     <View style={styles.timeCard}>
       <Icon name="timer-outline" size={30} color="#007AFF" />
       <Text style={styles.timeValue}>{totalScreenTime} min</Text>
@@ -45,11 +52,15 @@ const HomeScreen = ({ totalScreenTime }) => (
 
 const SettingsScreen = () => (
   <View style={styles.contentView}>
-    <Text style={styles.contentTitle}>⚙️ Settings</Text>
+    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      <Icon name="settings-outline" size={28} color="#007AFF" style={{ marginRight: 8, marginBottom: 14 }} />
+      <Text style={styles.contentTitle}>Settings</Text>
+    </View>
+
     <Text style={styles.infoText}>
       Mock settings screen. Implementation would involve state for various preferences.
     </Text>
-    <TouchableOpacity 
+    <TouchableOpacity
       style={styles.actionButton}
       onPress={() => Alert.alert('Action', 'Mock Setting Saved!')}
     >
@@ -60,7 +71,10 @@ const SettingsScreen = () => (
 
 const ProfileScreen = ({ userActivityCount }) => (
   <View style={styles.contentView}>
-    <Text style={styles.contentTitle}>👤 User Profile</Text>
+    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      <Icon name="person-outline" size={28} color="#007AFF" style={{ marginRight: 8, marginBottom: 16 }} />
+      <Text style={styles.contentTitle}>User Profile</Text>
+    </View>
     <Text style={styles.profileText}>User: Anonymous Tracker</Text>
     <Text style={styles.profileText}>
       Total Tracked Actions: {userActivityCount}
@@ -71,16 +85,31 @@ const ProfileScreen = ({ userActivityCount }) => (
   </View>
 );
 
-const SensorsScreen = ({ 
-  location, 
-  accelerometerData, 
-  gyroscopeData, 
-  isLocationEnabled, 
-  isSensorsEnabled 
+const SensorsScreen = ({
+  location,
+  accelerometerData,
+  gyroscopeData,
+  isLocationEnabled,
+  isSensorsEnabled,
+  screenEvents,
+  screenMeta,
+  onRefreshScreenEvents,
 }) => (
   <View style={styles.contentView}>
-    <Text style={styles.contentTitle}>📡 Sensor Data</Text>
-    
+    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      <MaterialIcons name="sensors" size={28} color="#007AFF" style={{ marginRight: 8, marginBottom: 16 }} />
+      <Text style={styles.contentTitle}>Sensor Data</Text>
+    </View>
+
+    <Text style={styles.infoText}>
+      Real-time sensor data for digital phenotyping analysis. Location data helps track mobility patterns,
+      while accelerometer and gyroscope data provide insights into physical activity and device orientation.
+    </Text>
+
+    <Text style={styles.Title}>
+      Device Sensors
+    </Text>
+
     {/* Location Section */}
     <View style={styles.sensorSection}>
       <View style={styles.sensorHeader}>
@@ -88,7 +117,7 @@ const SensorsScreen = ({
         <Text style={styles.sensorTitle}>Location</Text>
         <View style={[styles.statusIndicator, { backgroundColor: isLocationEnabled ? '#32D74B' : '#FF3B30' }]} />
       </View>
-      
+
       {isLocationEnabled && location ? (
         <View style={styles.sensorData}>
           <Text style={styles.sensorLabel}>Latitude: <Text style={styles.sensorValue}>{location.latitude.toFixed(6)}</Text></Text>
@@ -109,13 +138,13 @@ const SensorsScreen = ({
         <Text style={styles.sensorTitle}>Accelerometer</Text>
         <View style={[styles.statusIndicator, { backgroundColor: isSensorsEnabled ? '#32D74B' : '#FF3B30' }]} />
       </View>
-      
+
       {isSensorsEnabled && accelerometerData ? (
         <View style={styles.sensorData}>
           <Text style={styles.sensorLabel}>X-axis: <Text style={styles.sensorValue}>{accelerometerData.x.toFixed(3)}g</Text></Text>
           <Text style={styles.sensorLabel}>Y-axis: <Text style={styles.sensorValue}>{accelerometerData.y.toFixed(3)}g</Text></Text>
           <Text style={styles.sensorLabel}>Z-axis: <Text style={styles.sensorValue}>{accelerometerData.z.toFixed(3)}g</Text></Text>
-          <Text style={styles.sensorLabel}>Magnitude: <Text style={styles.sensorValue}>{Math.sqrt(accelerometerData.x**2 + accelerometerData.y**2 + accelerometerData.z**2).toFixed(3)}g</Text></Text>
+          <Text style={styles.sensorLabel}>Magnitude: <Text style={styles.sensorValue}>{Math.sqrt(accelerometerData.x ** 2 + accelerometerData.y ** 2 + accelerometerData.z ** 2).toFixed(3)}g</Text></Text>
         </View>
       ) : (
         <Text style={styles.sensorDisabled}>Accelerometer not available</Text>
@@ -129,23 +158,63 @@ const SensorsScreen = ({
         <Text style={styles.sensorTitle}>Gyroscope</Text>
         <View style={[styles.statusIndicator, { backgroundColor: isSensorsEnabled ? '#32D74B' : '#FF3B30' }]} />
       </View>
-      
+
       {isSensorsEnabled && gyroscopeData ? (
         <View style={styles.sensorData}>
           <Text style={styles.sensorLabel}>X-axis: <Text style={styles.sensorValue}>{gyroscopeData.x.toFixed(3)} rad/s</Text></Text>
           <Text style={styles.sensorLabel}>Y-axis: <Text style={styles.sensorValue}>{gyroscopeData.y.toFixed(3)} rad/s</Text></Text>
           <Text style={styles.sensorLabel}>Z-axis: <Text style={styles.sensorValue}>{gyroscopeData.z.toFixed(3)} rad/s</Text></Text>
-          <Text style={styles.sensorLabel}>Magnitude: <Text style={styles.sensorValue}>{Math.sqrt(gyroscopeData.x**2 + gyroscopeData.y**2 + gyroscopeData.z**2).toFixed(3)} rad/s</Text></Text>
+          <Text style={styles.sensorLabel}>Magnitude: <Text style={styles.sensorValue}>{Math.sqrt(gyroscopeData.x ** 2 + gyroscopeData.y ** 2 + gyroscopeData.z ** 2).toFixed(3)} rad/s</Text></Text>
         </View>
       ) : (
         <Text style={styles.sensorDisabled}>Gyroscope not available</Text>
       )}
     </View>
 
-    <Text style={styles.infoText}>
-      Real-time sensor data for digital phenotyping analysis. Location data helps track mobility patterns, 
-      while accelerometer and gyroscope data provide insights into physical activity and device orientation.
+    <Text style={styles.Title}>
+      Software Sensors
     </Text>
+
+    {/* Screen Power Events Section */}
+    <View style={styles.SoftwereSensorSection}>
+      <View style={styles.sensorHeader}>
+        <Icon name="power-outline" size={24} color="#a700adff" />
+        <Text style={styles.sensorTitle}>Screen Events</Text>
+        <View style={[styles.statusIndicator, { backgroundColor: (screenEvents && screenEvents.length) ? '#32D74B' : '#FFCC00' }]} />
+      </View>
+      {screenEvents && screenEvents.length > 0 ? (
+        <View style={styles.sensorData}>
+          <Text style={styles.sensorLabel}>Total events: <Text style={styles.sensorValue}>{screenEvents.length}</Text></Text>
+          {screenEvents.slice(-10).map((evt, idx) => (
+            <Text key={idx} style={styles.sensorLabel}>
+              {new Date(evt.ts).toLocaleString()} — <Text style={styles.sensorValue}>{evt.event}</Text>
+            </Text>
+          ))}
+          <TouchableOpacity style={[styles.actionButton, { marginTop: 12, backgroundColor: '#a700adff' }]} onPress={onRefreshScreenEvents}>
+            <Text style={styles.actionButtonText}>Refresh Now</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <View>
+          <Text style={styles.sensorDisabled}>No events yet. Lock/unlock the device to generate events.</Text>
+          <Text style={[styles.sensorLabel, { marginTop: 8 }]}>Doc dir: <Text style={styles.sensorValue}>{FileSystem.documentDirectory}</Text></Text>
+          {screenMeta ? (
+            <>
+              <Text style={styles.sensorLabel}>
+                Path tried: <Text style={styles.sensorValue}>{screenMeta.targetPath || 'n/a'}</Text> {`exists: ${screenMeta.exists ? 'yes' : 'no'}`}
+              </Text>
+              <Text style={styles.sensorLabel}>
+                Last read: <Text style={styles.sensorValue}>{screenMeta.lastRead ? new Date(screenMeta.lastRead).toLocaleTimeString() : 'n/a'}</Text>
+                {screenMeta.error ? `  err: ${screenMeta.error}` : ''}
+              </Text>
+            </>
+          ) : null}
+          <TouchableOpacity style={[styles.actionButton, { marginTop: 12, backgroundColor: '#a700adff' }]} onPress={onRefreshScreenEvents}>
+            <Text style={styles.actionButtonText}>Refresh Now</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
   </View>
 );
 
@@ -155,7 +224,8 @@ const ActivityTrackerApp = () => {
   const [activeTab, setActiveTab] = useState('Home');
   const [totalScreenTime, setTotalScreenTime] = useState(0);
   const [activityCount, setActivityCount] = useState(0);
-  
+  const { events: screenEvents, meta: screenMeta, refreshNow: refreshScreenEvents } = useScreenEventsEx2();
+
   // Sensor states
   const [location, setLocation] = useState(null);
   const [accelerometerData, setAccelerometerData] = useState(null);
@@ -181,7 +251,7 @@ const ActivityTrackerApp = () => {
               setLocation(newLocation.coords);
             }
           );
-          
+
           // Store subscription for cleanup
           return locationSubscription;
         } else {
@@ -203,24 +273,24 @@ const ActivityTrackerApp = () => {
         // Check if sensors are available
         const accelerometerAvailable = await Accelerometer.isAvailableAsync();
         const gyroscopeAvailable = await Gyroscope.isAvailableAsync();
-        
+
         if (accelerometerAvailable && gyroscopeAvailable) {
           setIsSensorsEnabled(true);
-          
+
           // Set update intervals (60Hz for smooth data)
           Accelerometer.setUpdateInterval(16); // ~60fps
           Gyroscope.setUpdateInterval(16); // ~60fps
-          
+
           // Subscribe to accelerometer updates
           const accelerometerSubscription = Accelerometer.addListener((data) => {
             setAccelerometerData(data);
           });
-          
+
           // Subscribe to gyroscope updates
           const gyroscopeSubscription = Gyroscope.addListener((data) => {
             setGyroscopeData(data);
           });
-          
+
           // Store subscriptions for cleanup
           return { accelerometerSubscription, gyroscopeSubscription };
         } else {
@@ -239,7 +309,7 @@ const ActivityTrackerApp = () => {
   useEffect(() => {
     const interval = setInterval(() => {
       // Increment mock screen time by a random amount
-      const increment = Math.floor(Math.random() * 5) + 1; 
+      const increment = Math.floor(Math.random() * 5) + 1;
       setTotalScreenTime(prev => prev + increment);
       setActivityCount(prev => prev + 1);
     }, 5000); // Updates every 5 seconds
@@ -257,12 +327,15 @@ const ActivityTrackerApp = () => {
       case 'Profile':
         return <ProfileScreen userActivityCount={activityCount} />;
       case 'Sensors':
-        return <SensorsScreen 
+        return <SensorsScreen
           location={location}
           accelerometerData={accelerometerData}
           gyroscopeData={gyroscopeData}
           isLocationEnabled={isLocationEnabled}
           isSensorsEnabled={isSensorsEnabled}
+          screenEvents={screenEvents}
+          screenMeta={screenMeta}
+          onRefreshScreenEvents={refreshScreenEvents}
         />;
       default:
         return <HomeScreen totalScreenTime={totalScreenTime} />;
@@ -289,10 +362,10 @@ const ActivityTrackerApp = () => {
                   tab === 'Home'
                     ? 'home-outline'
                     : tab === 'Sensors'
-                    ? 'analytics-outline'
-                    : tab === 'Settings'
-                    ? 'settings-outline'
-                    : 'person-outline'
+                      ? 'analytics-outline'
+                      : tab === 'Settings'
+                        ? 'settings-outline'
+                        : 'person-outline'
                 }
                 size={24}
                 color={activeTab === tab ? '#FFF' : '#333'}
@@ -319,8 +392,11 @@ const ActivityTrackerApp = () => {
 };
 
 // --- Stylesheet ---
-
 const styles = StyleSheet.create({
+  Title: {
+    fontSize: 20,
+    marginVertical: 10
+  },
   container: {
     flex: 1,
     backgroundColor: '#f0f4f8',
@@ -333,7 +409,7 @@ const styles = StyleSheet.create({
   sidebar: {
     width: 120,
     backgroundColor: '#fff',
-    paddingTop: 10,
+    paddingTop: 20,
     borderRightWidth: 1,
     borderRightColor: '#eee',
     alignItems: 'center',
@@ -343,7 +419,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#007AFF',
     marginBottom: 30,
-        marginTop: 12,
+    marginTop: 12,
   },
   sidebarItem: {
     paddingVertical: 15,
@@ -369,6 +445,7 @@ const styles = StyleSheet.create({
   contentArea: {
     flex: 1,
     padding: 20,
+    paddingTop: 40,
   },
   contentView: {
     flex: 1,
@@ -440,7 +517,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#666',
     lineHeight: 24,
-    marginTop: 10,
+    marginVertical: 10,
     padding: 10,
     backgroundColor: '#fff',
     borderRadius: 8,
@@ -470,9 +547,22 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 12,
     padding: 16,
-    marginBottom: 16,
+    marginBottom: 56,
     borderLeftWidth: 4,
     borderLeftColor: '#007AFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  SoftwereSensorSection: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 56,
+    borderLeftWidth: 4,
+    borderLeftColor: '#a700adff',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -522,4 +612,133 @@ const styles = StyleSheet.create({
   },
 });
 
+// Screen power events reader (requires expo-file-system)
+const LOG_FILE = FileSystem.documentDirectory + 'screen-events.log';
+
+function useScreenEvents() {
+  const [events, setEvents] = useState([]);
+  useEffect(() => {
+    let mounted = true;
+    const readLog = async () => {
+      try {
+        // First, try the standard documentDirectory path
+        let targetPath = LOG_FILE;
+        let info = await FileSystem.getInfoAsync(targetPath);
+
+        // Fallback: absolute internal files dir (helps if documentDirectory is scoped)
+        if (!info.exists) {
+          const pkg = (Constants?.expoConfig && Constants.expoConfig.android && Constants.expoConfig.android.package) || 'com.dp.demo';
+          const abs = `file:///data/user/0/${pkg}/files/screen-events.log`;
+          info = await FileSystem.getInfoAsync(abs);
+          if (info.exists) targetPath = abs;
+        }
+
+        if (!info.exists) return;
+        let content = await FileSystem.readAsStringAsync(targetPath);
+        // Handle files that used literal "\n" instead of newlines
+        if (content.includes('\\n')) {
+          content = content.replace(/\\n/g, '\n');
+        }
+        const lines = content.split('\n').filter(Boolean);
+        const parsed = lines.map((l) => {
+          try { return JSON.parse(l); } catch { return null; }
+        }).filter(Boolean);
+        if (mounted) setEvents(parsed);
+      } catch (e) {
+        // ignore errors
+      }
+    };
+    readLog();
+    const id = setInterval(readLog, 5000);
+    return () => { mounted = false; clearInterval(id); };
+  }, []);
+  return events;
+}
+
+// Extended hook with diagnostics + manual refresh
+function useScreenEventsEx() {
+  const [meta, setMeta] = useState({ targetPath: LOG_FILE, exists: false, lastRead: null, error: null });
+  const [events, setEvents] = useState([]);
+
+  const readLog = React.useCallback(async () => {
+    try {
+      let targetPath = LOG_FILE;
+      let info = await FileSystem.getInfoAsync(targetPath);
+      if (!info.exists) {
+        const pkg = (Constants?.expoConfig && Constants.expoConfig.android && Constants.expoConfig.android.package) || 'com.dp.demo';
+        const abs = `file:///data/user/0/${pkg}/files/screen-events.log`;
+        info = await FileSystem.getInfoAsync(abs);
+        if (info.exists) targetPath = abs;
+      }
+
+      if (!info.exists) {
+        setMeta({ targetPath, exists: false, lastRead: Date.now(), error: null });
+        setEvents([]);
+        return;
+      }
+
+      let content = await FileSystem.readAsStringAsync(targetPath);
+      if (content.includes('\\n')) content = content.replace(/\\n/g, '\n');
+      const lines = content.split('\n').filter(Boolean);
+      const parsed = lines.map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+      setEvents(parsed);
+      setMeta({ targetPath, exists: true, lastRead: Date.now(), error: null });
+    } catch (e) {
+      setMeta(m => ({ ...m, lastRead: Date.now(), error: String(e?.message || e) }));
+    }
+  }, []);
+
+  useEffect(() => {
+    const id = setInterval(() => { readLog(); }, 2000);
+    readLog();
+    return () => clearInterval(id);
+  }, [readLog]);
+
+  return { events, meta, refreshNow: readLog };
+}
+
 export default ActivityTrackerApp;
+
+// Safer reader that tries multiple paths and tolerates undefined documentDirectory
+function useScreenEventsEx2() {
+  const [meta, setMeta] = useState({ targetPath: LOG_FILE, exists: false, lastRead: null, error: null });
+  const [events, setEvents] = useState([]);
+
+  const readLog = React.useCallback(async () => {
+    const pkg = (Constants?.expoConfig && Constants.expoConfig.android && Constants.expoConfig.android.package) || 'com.dp.demo';
+    const candidates = [];
+    if (FileSystem.documentDirectory) {
+      candidates.push(FileSystem.documentDirectory + 'screen-events.log');
+    }
+    candidates.push(`file:///data/user/0/${pkg}/files/screen-events.log`);
+
+    let lastErr = null;
+    for (const p of candidates) {
+      try {
+        const info = await FileSystem.getInfoAsync(p);
+        if (info && info.exists) {
+          let content = await FileSystem.readAsStringAsync(p);
+          if (content && content.includes('\\n')) content = content.replace(/\\n/g, '\n');
+          const lines = (content || '').split('\n').filter(Boolean);
+          const parsed = lines.map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+          setEvents(parsed);
+          setMeta({ targetPath: p, exists: true, lastRead: Date.now(), error: null });
+          return;
+        }
+      } catch (e) {
+        lastErr = String(e?.message || e);
+      }
+    }
+
+    setEvents([]);
+    setMeta({ targetPath: candidates[candidates.length - 1], exists: false, lastRead: Date.now(), error: lastErr });
+  }, []);
+
+  useEffect(() => {
+    const id = setInterval(() => { readLog(); }, 2000);
+    readLog();
+    return () => clearInterval(id);
+  }, [readLog]);
+
+  return { events, meta, refreshNow: readLog };
+}
