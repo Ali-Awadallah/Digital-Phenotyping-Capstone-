@@ -155,6 +155,116 @@ Users can manage privacy settings:
 4. Integrate Splunk explainable anomaly visualizations  
 5. Pilot test with synthetic data  
 
+
+---
+
+## Demo App (Android - iOS Partially) — Setup, Run, Build
+
+This repository includes a working Android demo under `DP_demo/demo` built with Expo + React Native and a few native hooks. The demo collects and displays:
+
+- App usage for “Today” (Total screen time + Top apps with minutes and icons)
+- Realtime “Screen Events” (SCREEN_ON / SCREEN_OFF)
+- Location Tracking
+- Accelerometer Tracking
+- Gyroscope Tracking
+
+
+It uses Android’s UsageStats API (via a small native module) and a manifest, BroadcastReceiver API for screen power events.
+
+### Prerequisites
+
+- Node.js 18+ and npm
+- JDK 17 (required by React Native/AGP). Verify with `java -version`
+- Android SDK + Platform Tools (ADB) via Android Studio
+- Ensure `adb` is on your PATH or use the full path (e.g. `%LOCALAPPDATA%\Android\Sdk\platform-tools\adb`)
+
+### First‑time setup
+
+```
+cd DP_demo/demo
+npm install
+
+```
+
+### Run on a emulator
+
+1) Create and launch an emulator (AVD)
+
+- Android Studio → Device Manager → Create Device → Start (▶)
+- Or CLI:
+  - List: `%LOCALAPPDATA%\Android\Sdk\emulator\emulator.exe -list-avds`
+  - Start: `%LOCALAPPDATA%\Android\Sdk\emulator\emulator.exe -avd <AVD_NAME>`
+
+2) Build a debug APK with embedded bundle
+
+```
+cd DP_demo/demo/android
+./gradlew assembleDebug    # Windows: .\gradlew.bat assembleDebug
+```
+
+3) Run the app
+
+```
+cd ..
+npx expo run:android
+```
+
+### Run on a physical device
+
+1) Enable USB debugging on the phone (Developer options)
+
+2) Verify ADB sees your device
+
+```
+adb devices
+# if multiple devices, note your serial (e.g., R5CR704WGMK)
+```
+
+3) Build a debug APK with embedded JS bundle (runs offline)
+
+```
+cd android
+./gradlew assembleDebug     # Windows: .\gradlew.bat assembleDebug
+```
+
+4) Install the APK
+
+```
+adb -s <serial> install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+5) Open the app (“DP demo”).
+
+### Grant usage access (for app usage)
+
+On first run, the Home screen shows a banner if the permission is missing. Tap “Open Usage Access Settings” and enable for “DP demo”, or navigate manually:
+
+Settings → Apps → Special access → Usage access → DP demo → Allow
+
+### Troubleshooting
+
+- Java error “Unsupported class file major version …” → Ensure JDK 17 and/or set `org.gradle.java.home` in `android/gradle.properties` to your JDK 17 path.
+- Red screen “Unable to load script” → Ensure you installed the Gradle‑built APK (`assembleDebug`/`assembleRelease`), not a dev client.
+- Device not found → `adb kill-server && adb start-server`, replug cable, accept RSA prompt, or use `--device` selection in Expo.
+- Usage shows zero → After granting access, close the app and open it again and refresh usage data.
+
+### Project structure (relevant parts)
+
+```
+DP_demo/
+  demo/
+    App.js                 # UI + usage/sensors wiring
+    app.json               # expo config (android.package = com.dp.demo)
+    android/
+      app/
+        src/main/AndroidManifest.xml    # includes PACKAGE_USAGE_STATS + screen receiver
+        src/main/java/com/dp/demo/
+          AppUsageModule.kt             # UsageStats bridge
+          AppUsagePackage.kt
+          ScreenEventsReceiver.java     # Power events receiver
+          MainApplication.kt            # Registers packages/receivers
+```
+
 ---
 
 ## 🧑‍💻 License
