@@ -7,7 +7,11 @@ import {
   SafeAreaView,
   StyleSheet,
   Alert,
+  NativeModules,
+  Platform,
 } from 'react-native';
+import { Image } from 'react-native';
+import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { Ionicons as Icon } from '@expo/vector-icons';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import * as Location from 'expo-location';
@@ -15,17 +19,21 @@ import { Accelerometer, Gyroscope } from 'expo-sensors';
 import * as FileSystem from 'expo-file-system/legacy';
 import Constants from 'expo-constants';
 
-// Mock Data for App Usage
-const MOCK_APP_USAGE = [
-  { name: 'Browser', time: 125, icon: 'globe-outline' },
-  { name: 'Social', time: 90, icon: 'chatbubbles-outline' },
-  { name: 'Media Player', time: 55, icon: 'play-circle-outline' },
-  { name: 'Work', time: 30, icon: 'briefcase-outline' },
-];
+const AppUsageNative = NativeModules.AppUsage;
+
+// Friendly names and fallback icons for known packages
+const KNOWN_APPS = {
+  'com.zhiliaoapp.musically': { name: 'TikTok', iconName: 'tiktok' },
+  'com.instagram.android': { name: 'Instagram', iconName: 'instagram' },
+  'com.facebook.katana': { name: 'Facebook', iconName: 'facebook' },
+  'com.whatsapp': { name: 'WhatsApp', iconName: 'whatsapp' },
+  'com.snapchat.android': { name: 'Snapchat', iconName: 'snapchat' },
+};
+
 
 // --- Sub-Components for Navigation Views ---
 
-const HomeScreen = ({ totalScreenTime }) => (
+const HomeScreen = ({ totalScreenTime, appsUsage, hasUsageAccess, onRequestAccess, onRefreshUsage }) => (
   <View style={styles.contentView}>
     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
       <MaterialIcons name="phone-iphone" size={28} color="#007AFF" style={{ marginRight: 8, marginBottom: 14 }} />
@@ -35,18 +43,47 @@ const HomeScreen = ({ totalScreenTime }) => (
     <View style={styles.timeCard}>
       <Icon name="timer-outline" size={30} color="#007AFF" />
       <Text style={styles.timeValue}>{totalScreenTime} min</Text>
-      <Text style={styles.timeLabel}>Total Screen Time Today (Mock)</Text>
+      <Text style={styles.timeLabel}>Total Screen Time Today</Text>
     </View>
-
-    <Text style={styles.sectionHeader}>Top App Usage (Mock)</Text>
-    {MOCK_APP_USAGE.map((app, index) => (
-      <View key={index} style={styles.appItem}>
-        <Icon name={app.icon} size={20} color="#333" style={{ width: 30 }} />
-        <Text style={styles.appName}>{app.name}</Text>
-        <Text style={styles.appTime}>{app.time} min</Text>
-        <View style={[styles.timeBar, { width: `${(app.time / 150) * 100}%` }]} />
+    {!hasUsageAccess && Platform.OS === 'android' ? (
+      <View style={styles.sensorSection}>
+        <Text style={styles.sensorDisabled}>Usage access is not granted. Grant to show real app usage.</Text>
+        <Text style={styles.sensorDisabled}>Close the app and Open it agian to view the usage</Text>
+        <TouchableOpacity style={[styles.actionButton, { marginTop: 8, backgroundColor: '#007AFF' }]} onPress={onRequestAccess}>
+          <Text style={styles.actionButtonText}>Open Usage Access Settings</Text>
+        </TouchableOpacity>
       </View>
-    ))}
+    ) : null}
+
+    <Text style={styles.sectionHeader}>Top App Usage</Text>
+    {(appsUsage && appsUsage.length > 0) ? (
+      <View>
+        {appsUsage.slice(0, 5).map((app, index) => {
+          const pkg = app.package || '';
+          const known = KNOWN_APPS[pkg];
+          const displayName = (app.name && app.name !== pkg) ? app.name : (known?.name || pkg);
+          return (
+            <View key={index} style={styles.appItem}>
+              {app.icon ? (
+                <Image source={{ uri: app.icon }} style={{ width: 24, height: 24, borderRadius: 4, marginRight: 6 }} />
+              ) : known?.iconName ? (
+                <MaterialCommunityIcons name={known.iconName} size={24} color="#333" style={{ width: 30 }} />
+              ) : (
+                <Icon name={'apps-outline'} size={20} color="#333" style={{ width: 30 }} />
+              )}
+              <Text style={styles.appName}>{displayName}</Text>
+              <Text style={styles.appTime}>{Math.round((app.ms || 0) / 60000)} min</Text>
+              <View style={[styles.timeBar, { width: `${Math.min(100, (app.ms / (appsUsage[0].ms || 1)) * 100)}%` }]} />
+            </View>
+          );
+        })}
+        <TouchableOpacity style={[styles.actionButton, { marginTop: 12, backgroundColor: '#007AFF' }]} onPress={onRefreshUsage}>
+          <Text style={styles.actionButtonText}>Refresh Usage</Text>
+        </TouchableOpacity>
+      </View>
+    ) : (
+      <Text style={styles.sensorDisabled}>No usage data yet.</Text>
+    )}
   </View>
 );
 
@@ -98,12 +135,11 @@ const SensorsScreen = ({
   <View style={styles.contentView}>
     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
       <MaterialIcons name="sensors" size={28} color="#007AFF" style={{ marginRight: 8, marginBottom: 16 }} />
+
       <Text style={styles.contentTitle}>Sensor Data</Text>
     </View>
-
     <Text style={styles.infoText}>
-      Real-time sensor data for digital phenotyping analysis. Location data helps track mobility patterns,
-      while accelerometer and gyroscope data provide insights into physical activity and device orientation.
+      Real-time sensor data for digital phenotyping analysis.
     </Text>
 
     <Text style={styles.Title}>
@@ -154,7 +190,7 @@ const SensorsScreen = ({
     {/* Gyroscope Section */}
     <View style={styles.sensorSection}>
       <View style={styles.sensorHeader}>
-        <Icon name="refresh-outline" size={24} color="#32D74B" />
+        <MaterialIcons name="screen-rotation" size={24} color="#32D74B" />
         <Text style={styles.sensorTitle}>Gyroscope</Text>
         <View style={[styles.statusIndicator, { backgroundColor: isSensorsEnabled ? '#32D74B' : '#FF3B30' }]} />
       </View>
@@ -305,23 +341,39 @@ const ActivityTrackerApp = () => {
     startSensors();
   }, []);
 
-  // Mock screen time update using useEffect (similar to the original timer)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      // Increment mock screen time by a random amount
-      const increment = Math.floor(Math.random() * 5) + 1;
-      setTotalScreenTime(prev => prev + increment);
-      setActivityCount(prev => prev + 1);
-    }, 5000); // Updates every 5 seconds
+  // App usage (Android)
+  const [appsUsage, setAppsUsage] = useState([]);
+  const [hasUsageAccess, setHasUsageAccess] = useState(true);
 
-    return () => clearInterval(interval);
+  const fetchUsage = async () => {
+    try {
+      if (Platform.OS !== 'android' || !AppUsageNative) return;
+      const allowed = await AppUsageNative.hasUsageAccess();
+      setHasUsageAccess(!!allowed);
+      if (!allowed) return;
+      const res = await AppUsageNative.getUsageStatsForToday();
+      const apps = (res?.apps || []);
+      setAppsUsage(apps);
+      const totalMs = res?.totalMs || 0;
+      setTotalScreenTime(Math.round(totalMs / 60000));
+    } catch (e) {
+      // ignore
+    }
+  };
+
+  const openUsageAccess = async () => { try { AppUsageNative?.openUsageAccessSettings(); } catch (e) { } };
+
+  useEffect(() => {
+    fetchUsage();
+    const id = setInterval(fetchUsage, 60 * 1000);
+    return () => clearInterval(id);
   }, []);
 
   // Simple rendering logic based on activeTab
   const renderContent = () => {
     switch (activeTab) {
       case 'Home':
-        return <HomeScreen totalScreenTime={totalScreenTime} />;
+        return <HomeScreen totalScreenTime={totalScreenTime} appsUsage={appsUsage} hasUsageAccess={hasUsageAccess} onRequestAccess={openUsageAccess} onRefreshUsage={fetchUsage} />;
       case 'Settings':
         return <SettingsScreen />;
       case 'Profile':
@@ -338,7 +390,7 @@ const ActivityTrackerApp = () => {
           onRefreshScreenEvents={refreshScreenEvents}
         />;
       default:
-        return <HomeScreen totalScreenTime={totalScreenTime} />;
+        return <HomeScreen totalScreenTime={totalScreenTime} appsUsage={appsUsage} hasUsageAccess={hasUsageAccess} onRequestAccess={openUsageAccess} onRefreshUsage={fetchUsage} />;
     }
   };
 
@@ -395,7 +447,8 @@ const ActivityTrackerApp = () => {
 const styles = StyleSheet.create({
   Title: {
     fontSize: 20,
-    marginVertical: 10
+    marginVertical: 10,
+    fontWeight: "bold"
   },
   container: {
     flex: 1,
@@ -547,7 +600,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 12,
     padding: 16,
-    marginBottom: 56,
+    marginBottom: 36,
     borderLeftWidth: 4,
     borderLeftColor: '#007AFF',
     shadowColor: '#000',
@@ -609,6 +662,7 @@ const styles = StyleSheet.create({
     padding: 12,
     backgroundColor: '#fff5f5',
     borderRadius: 8,
+    marginVertical: 5
   },
 });
 
@@ -621,7 +675,7 @@ function useScreenEvents() {
     let mounted = true;
     const readLog = async () => {
       try {
-        // First, try the standard documentDirectory path
+        // try the standard documentDirectory path
         let targetPath = LOG_FILE;
         let info = await FileSystem.getInfoAsync(targetPath);
 
