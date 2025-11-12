@@ -4,12 +4,13 @@ import {
   Text,
   TouchableOpacity,
   ScrollView,
-  SafeAreaView,
+//  SafeAreaView,
   StyleSheet,
   Alert,
   NativeModules,
   Platform,
 } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { Image } from 'react-native';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { Ionicons as Icon } from '@expo/vector-icons';
@@ -18,6 +19,7 @@ import * as Location from 'expo-location';
 import { Accelerometer, Gyroscope } from 'expo-sensors';
 import * as FileSystem from 'expo-file-system/legacy';
 import Constants from 'expo-constants';
+import { DemoScreen } from './DemoScreen';
 
 const AppUsageNative = NativeModules.AppUsage;
 
@@ -257,6 +259,14 @@ const SensorsScreen = ({
 // --- Main App Component ---
 
 const ActivityTrackerApp = () => {
+  return (
+    <SafeAreaProvider>
+      <SafeAreaView style={{ flex: 1 }}>
+        <DemoScreen />
+      </SafeAreaView>
+    </SafeAreaProvider>
+  );
+
   const [activeTab, setActiveTab] = useState('Home');
   const [totalScreenTime, setTotalScreenTime] = useState(0);
   const [activityCount, setActivityCount] = useState(0);
@@ -441,6 +451,7 @@ const ActivityTrackerApp = () => {
       </View>
     </SafeAreaView>
   );
+
 };
 
 // --- Stylesheet ---
