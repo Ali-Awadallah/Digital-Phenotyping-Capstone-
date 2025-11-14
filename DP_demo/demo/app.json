@@ -27,7 +27,8 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "./plugins/screen-power-plugin"
+      "./plugins/screen-power-plugin",
+      "expo-font"
     ]
   }
 }
