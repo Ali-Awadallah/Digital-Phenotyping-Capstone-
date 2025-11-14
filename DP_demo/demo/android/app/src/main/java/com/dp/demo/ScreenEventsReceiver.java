@@ -20,6 +20,9 @@ public class ScreenEventsReceiver extends BroadcastReceiver {
 
     long ts = System.currentTimeMillis();
     File dir = context.getFilesDir();
+    //if a sentinel file exists, skip logging
+    File disabled = new File(dir, "screen-events.disabled");
+    if (disabled.exists()) return;
     File log = new File(dir, "screen-events.log");
 
     try (FileWriter writer = new FileWriter(log, true)) {

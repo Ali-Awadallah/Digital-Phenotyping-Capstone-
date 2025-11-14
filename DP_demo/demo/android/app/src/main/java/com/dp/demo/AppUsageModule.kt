@@ -55,16 +55,28 @@ class AppUsageModule(private val reactContext: ReactApplicationContext) : ReactC
       cal.set(Calendar.MILLISECOND, 0)
       val start = cal.timeInMillis
 
-      val stats: List<UsageStats> = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, start, end) ?: emptyList()
       val pm: PackageManager = reactContext.packageManager
 
-      // Merge duplicates by package and sum total foreground time
+      // Build exact aggregation for [start, end] to avoid bucket-boundary bleed across midnight
       val byPkg = HashMap<String, Long>()
-      for (u in stats) {
-        if (u.totalTimeInForeground > 0) {
-          val pkg = u.packageName
-          val prev = byPkg[pkg] ?: 0L
-          byPkg[pkg] = prev + u.totalTimeInForeground
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+        val agg = usm.queryAndAggregateUsageStats(start, end)
+        for ((pkg, u) in agg) {
+          val ms = u.totalTimeInForeground
+          if (ms > 0) {
+            val prev = byPkg[pkg] ?: 0L
+            byPkg[pkg] = prev + ms
+          }
+        }
+      } else {
+        // Fallback: older devices — use daily buckets but still try to constrain
+        val stats: List<UsageStats> = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, start, end) ?: emptyList()
+        for (u in stats) {
+          if (u.totalTimeInForeground > 0) {
+            val pkg = u.packageName
+            val prev = byPkg[pkg] ?: 0L
+            byPkg[pkg] = prev + u.totalTimeInForeground
+          }
         }
       }
 
