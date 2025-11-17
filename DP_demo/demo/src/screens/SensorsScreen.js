@@ -1,4 +1,11 @@
-import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
+import React, { useEffect } from "react";
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  Platform,
+} from "react-native";
 import { Ionicons as Icon } from "@expo/vector-icons";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import * as Battery from "expo-battery";
@@ -23,7 +30,19 @@ export default function SensorsScreen() {
     screenMeta,
     refreshScreenEvents,
     collectScreenEvents,
+    notificationEvents,
+    refreshNotificationEvents,
+    hasNotificationAccess,
+    openNotificationAccess,
+    checkNotificationAccess,
+    collectNotifications,
   } = useApp();
+
+  useEffect(() => {
+    if (Platform.OS === "android" && checkNotificationAccess) {
+      checkNotificationAccess();
+    }
+  }, [checkNotificationAccess]);
 
   return (
     <ScreenContainer>
@@ -310,6 +329,136 @@ export default function SensorsScreen() {
             </TouchableOpacity>
           </View>
         )}
+      </View>
+
+      {/* Notifications */}
+      <View style={styles.sensorSection}>
+        <View style={styles.sensorHeader}>
+          <Icon name="notifications-outline" size={24} color="#f5a623" />
+          <Text style={styles.sensorTitle}>Notifications</Text>
+          {(() => {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const start = today.getTime();
+            const todays = (notificationEvents || []).filter(
+              (n) => n && typeof n.ts === "number" && n.ts >= start
+            );
+            const hasAny = todays.length > 0;
+            const color = !collectNotifications
+              ? "#FF3B30"
+              : !hasNotificationAccess
+              ? "#FF3B30"
+              : hasAny
+              ? "#32D74B"
+              : "#FFCC00";
+            return (
+              <View
+                style={[styles.statusIndicator, { backgroundColor: color }]}
+              />
+            );
+          })()}
+        </View>
+        {(() => {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const start = today.getTime();
+          const todays = (notificationEvents || []).filter(
+            (n) => n && typeof n.ts === "number" && n.ts >= start
+          );
+
+          if (!collectNotifications) {
+            return (
+              <View style={styles.sensorData}>
+                <Text style={styles.sensorDisabled}>
+                  Notification tracking is disabled in Settings.
+                </Text>
+              </View>
+            );
+          }
+
+          if (!hasNotificationAccess) {
+            return (
+              <View style={styles.sensorData}>
+                <Text style={styles.sensorDisabled}>
+                  Notification access is not granted. Enable it to track
+                  notification activity.
+                </Text>
+                <TouchableOpacity
+                  style={[
+                    styles.actionButton,
+                    { marginTop: 12, backgroundColor: "#f5a623" },
+                  ]}
+                  onPress={openNotificationAccess}
+                >
+                  <Text style={styles.actionButtonText}>
+                    Open Notification Access Settings
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            );
+          }
+
+          if (!todays.length) {
+            return (
+              <Text style={styles.sensorDisabled}>
+                No notifications logged today.
+              </Text>
+            );
+          }
+
+          const counts = {};
+          todays.forEach((n) => {
+            if (n.kind !== "posted") return;
+            const cat = n.category || "other";
+            counts[cat] = (counts[cat] || 0) + 1;
+          });
+          const rows = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+
+          const recent = todays.slice().reverse().slice(0, 5);
+
+          return (
+            <View style={styles.sensorData}>
+              <Text
+                style={[
+                  styles.sensorLabel,
+                  { marginTop: 8, fontFamily: "Archivo-SemiBold" },
+                ]}
+              >
+                Total events today:{" "}
+                <Text style={styles.sensorValue}>{todays.length}</Text>
+              </Text>
+              <Text
+                style={[
+                  styles.sensorLabel,
+                  { marginTop: 8, fontFamily: "Archivo-SemiBold" },
+                ]}
+              >
+                Total per Category:
+              </Text>
+              {rows.map(([cat, count]) => (
+                <Text key={cat} style={styles.sensorLabel}>
+                  {cat}: <Text style={styles.sensorValue}>{count}</Text>
+                </Text>
+              ))}
+              <Text
+                style={[
+                  styles.sensorLabel,
+                  { marginTop: 8, fontFamily: "Archivo-SemiBold" },
+                ]}
+              >
+                Recent events:
+              </Text>
+              {recent.map((n, idx) => (
+                <Text key={idx} style={styles.sensorLabel}>
+                  {new Date(n.ts).toLocaleTimeString()} — {n.appName} (
+                  {n.category || "other"}){" "}
+                  {n.kind === "removed" ? "[removed]" : ""}
+                  {n.title ? `: ${n.title}${n.text ? " - " + n.text : ""}` : ""}
+                </Text>
+              ))}
+            </View>
+          );
+        })()}
       </View>
 
       {/* Battery */}

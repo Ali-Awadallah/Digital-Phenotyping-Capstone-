@@ -14,9 +14,11 @@ import * as Location from "expo-location";
 import { Accelerometer, Gyroscope, Pedometer } from "expo-sensors";
 import * as Battery from "expo-battery";
 import { useScreenEventsEx2 } from "../hooks/useScreenEventsEx2";
+import { useNotificationEventsEx2 } from "../hooks/useNotificationEventsEx2";
 
-//native module for apps usage
+// native modules
 const AppUsageNative = NativeModules.AppUsage;
+const NotificationAccessNative = NativeModules.NotificationAccess;
 
 const AppContext = createContext(null);
 
@@ -44,6 +46,7 @@ export function AppProvider({ children }) {
   const [collectBattery, setCollectBattery] = useState(true);
   const [collectScreenEvents, setCollectScreenEvents] = useState(true);
   const [collectAppUsage, setCollectAppUsage] = useState(true);
+  const [collectNotifications, setCollectNotifications] = useState(true);
 
   // Load/save preferences
   const [prefsLoaded, setPrefsLoaded] = useState(false);
@@ -67,6 +70,8 @@ export function AppProvider({ children }) {
             setCollectScreenEvents(p.collectScreenEvents);
           if (typeof p.collectAppUsage === "boolean")
             setCollectAppUsage(p.collectAppUsage);
+          if (typeof p.collectNotifications === "boolean")
+            setCollectNotifications(p.collectNotifications);
         }
       } catch {}
       setPrefsLoaded(true);
@@ -83,6 +88,7 @@ export function AppProvider({ children }) {
       collectBattery,
       collectScreenEvents,
       collectAppUsage,
+      collectNotifications,
     };
     AsyncStorage.setItem(PREFS_KEY, JSON.stringify(data)).catch(() => {});
   }, [
@@ -94,6 +100,7 @@ export function AppProvider({ children }) {
     collectBattery,
     collectScreenEvents,
     collectAppUsage,
+    collectNotifications,
   ]);
 
   // OS-level location services watcher: alert when device location is OFF
@@ -139,9 +146,17 @@ export function AppProvider({ children }) {
     refreshNow: refreshScreenEvents,
   } = useScreenEventsEx2(prefsLoaded && collectScreenEvents);
 
+  // Notification events (toggle-aware)
+  const {
+    events: notificationEvents,
+    meta: notificationMeta,
+    refreshNow: refreshNotificationEvents,
+  } = useNotificationEventsEx2(prefsLoaded && collectNotifications);
+
   // Create/remove native sentinel file to disable/enable screen events logging at source
   useEffect(() => {
     if (!prefsLoaded) return;
+    if (Platform.OS !== "android") return;
     const pkg =
       (Constants?.expoConfig &&
         Constants.expoConfig.android &&
@@ -167,6 +182,40 @@ export function AppProvider({ children }) {
       } catch {}
     })();
   }, [prefsLoaded, collectScreenEvents]);
+
+  // Create/remove native sentinel file to disable/enable notifications logging at source
+  useEffect(() => {
+    if (!prefsLoaded) return;
+    if (Platform.OS !== "android") return;
+    const pkg =
+      (Constants?.expoConfig &&
+        Constants.expoConfig.android &&
+        Constants.expoConfig.android.package) ||
+      "com.dp.demo";
+    const candidates = [];
+    if (FileSystem.documentDirectory)
+      candidates.push(
+        FileSystem.documentDirectory + "notifications.disabled"
+      );
+    candidates.push(
+      `file:///data/user/0/${pkg}/files/notifications.disabled`
+    );
+    (async () => {
+      try {
+        for (const p of candidates) {
+          try {
+            const info = await FileSystem.getInfoAsync(p);
+            if (!collectNotifications) {
+              if (!info.exists) await FileSystem.writeAsStringAsync(p, "off");
+            } else {
+              if (info.exists)
+                await FileSystem.deleteAsync(p, { idempotent: true });
+            }
+          } catch {}
+        }
+      } catch {}
+    })();
+  }, [prefsLoaded, collectNotifications]);
 
   // Battery
   const [batteryLevel, setBatteryLevel] = useState(null);
@@ -503,6 +552,7 @@ export function AppProvider({ children }) {
   // App usage (Android)
   const [appsUsage, setAppsUsage] = useState([]);
   const [hasUsageAccess, setHasUsageAccess] = useState(true);
+  const [hasNotificationAccess, setHasNotificationAccess] = useState(false);
 
   const fetchUsage = async () => {
     try {
@@ -525,6 +575,25 @@ export function AppProvider({ children }) {
       AppUsageNative?.openUsageAccessSettings();
     } catch (e) {}
   };
+
+  const openNotificationAccess = async () => {
+    try {
+      NotificationAccessNative?.openSettings?.();
+    } catch (e) {}
+  };
+
+  const checkNotificationAccess = async () => {
+    try {
+      const granted = await NotificationAccessNative?.hasAccess?.();
+      setHasNotificationAccess(!!granted);
+    } catch (e) {}
+  };
+
+  useEffect(() => {
+    if (Platform.OS === "android") {
+      checkNotificationAccess();
+    }
+  }, []);
 
   useEffect(() => {
     if (!prefsLoaded || !collectAppUsage) {
@@ -578,6 +647,10 @@ export function AppProvider({ children }) {
       hasUsageAccess,
       fetchUsage,
       openUsageAccess,
+      hasNotificationAccess,
+      openNotificationAccess,
+      checkNotificationAccess,
+      openNotificationAccess,
       // sensors
       location,
       accelerometerData,
@@ -600,6 +673,8 @@ export function AppProvider({ children }) {
       setCollectScreenEvents,
       collectAppUsage,
       setCollectAppUsage,
+      collectNotifications,
+      setCollectNotifications,
       // battery
       batteryLevel,
       batteryState,
@@ -610,6 +685,10 @@ export function AppProvider({ children }) {
       screenEvents,
       screenMeta,
       refreshScreenEvents,
+      // notifications
+      notificationEvents,
+      notificationMeta,
+      refreshNotificationEvents,
     }),
     [
       activeTab,
@@ -617,6 +696,7 @@ export function AppProvider({ children }) {
       totalScreenTime,
       appsUsage,
       hasUsageAccess,
+      hasNotificationAccess,
       location,
       accelerometerData,
       gyroscopeData,
@@ -630,12 +710,15 @@ export function AppProvider({ children }) {
       collectBattery,
       collectScreenEvents,
       collectAppUsage,
+      collectNotifications,
       batteryLevel,
       batteryState,
       isPedometerAvailable,
       stepsToday,
       screenEvents,
       screenMeta,
+      notificationEvents,
+      notificationMeta,
     ]
   );
 

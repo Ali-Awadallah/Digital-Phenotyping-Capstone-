@@ -20,6 +20,8 @@ export default function SettingsScreen() {
     setCollectScreenEvents,
     collectAppUsage,
     setCollectAppUsage,
+    collectNotifications,
+    setCollectNotifications,
   } = useApp();
 
   return (
@@ -87,6 +89,18 @@ export default function SettingsScreen() {
           icon={<Icon name="apps-outline" size={20} color="#15d6a9" />}
           value={collectAppUsage}
           onChange={setCollectAppUsage}
+        />
+        <Row
+          label="Notifications"
+          icon={
+            <Icon
+              name="notifications-outline"
+              size={20}
+              color="#f5a623"
+            />
+          }
+          value={collectNotifications}
+          onChange={setCollectNotifications}
         />
       </View>
     </ScreenContainer>
