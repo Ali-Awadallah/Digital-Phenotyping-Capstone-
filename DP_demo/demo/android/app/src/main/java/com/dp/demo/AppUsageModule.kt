@@ -3,7 +3,9 @@ package com.dp.demo
 import android.app.AppOpsManager
 import android.app.usage.UsageStats
 import android.app.usage.UsageStatsManager
+import android.app.usage.UsageEvents
 import android.content.Context
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -57,19 +59,54 @@ class AppUsageModule(private val reactContext: ReactApplicationContext) : ReactC
 
       val pm: PackageManager = reactContext.packageManager
 
-      // Build exact aggregation for [start, end] to avoid bucket-boundary bleed across midnight
+      // Build exact aggregation for [start, end] using UsageEvents to avoid any bucket bleed across midnight
       val byPkg = HashMap<String, Long>()
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
-        val agg = usm.queryAndAggregateUsageStats(start, end)
-        for ((pkg, u) in agg) {
-          val ms = u.totalTimeInForeground
-          if (ms > 0) {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+        val events = usm.queryEvents(start, end)
+        val lastForeground = HashMap<String, Long>()
+        val event = UsageEvents.Event()
+
+        while (events.hasNextEvent()) {
+          events.getNextEvent(event)
+          val pkg = event.packageName ?: continue
+          val ts = event.timeStamp
+          val type = event.eventType
+
+          val isFg = when (type) {
+            UsageEvents.Event.MOVE_TO_FOREGROUND, UsageEvents.Event.ACTIVITY_RESUMED -> true
+            else -> false
+          }
+          val isBg = when (type) {
+            UsageEvents.Event.MOVE_TO_BACKGROUND, UsageEvents.Event.ACTIVITY_PAUSED -> true
+            else -> false
+          }
+
+          if (isFg) {
+            lastForeground[pkg] = ts
+          } else if (isBg) {
+            val startTs = lastForeground.remove(pkg)
+            if (startTs != null && ts > startTs) {
+              val clampedStart = maxOf(startTs, start)
+              val clampedEnd = minOf(ts, end)
+              if (clampedEnd > clampedStart) {
+                val prev = byPkg[pkg] ?: 0L
+                byPkg[pkg] = prev + (clampedEnd - clampedStart)
+              }
+            }
+          }
+        }
+
+        // Close any sessions still in foreground at "end"
+        for ((pkg, startTs) in lastForeground) {
+          val clampedStart = maxOf(startTs, start)
+          val clampedEnd = end
+          if (clampedEnd > clampedStart) {
             val prev = byPkg[pkg] ?: 0L
-            byPkg[pkg] = prev + ms
+            byPkg[pkg] = prev + (clampedEnd - clampedStart)
           }
         }
       } else {
-        // Fallback: older devices — use daily buckets but still try to constrain
+        // Very old devices: best-effort fallback to daily stats
         val stats: List<UsageStats> = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, start, end) ?: emptyList()
         for (u in stats) {
           if (u.totalTimeInForeground > 0) {
