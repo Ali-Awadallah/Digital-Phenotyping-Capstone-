@@ -1,0 +1,103 @@
+plugins {
+  id 'application'
+  id 'org.jetbrains.kotlin.jvm' version '2.0.20'  // Kotlin version
+  id 'com.gradleup.shadow' version '8.3.5'
+}
+
+group = 'com.awareframework'
+version = '1.0.0-SNAPSHOT'
+
+repositories {
+  mavenCentral()
+}
+
+configurations {
+  compileClasspath.resolutionStrategy.activateDependencyLocking()
+  runtimeClasspath.resolutionStrategy.activateDependencyLocking()
+}
+
+application {
+  mainClassName = 'io.vertx.core.Launcher'
+  applicationDefaultJvmArgs = ['-DlogLevel=INFO']
+}
+
+def mainVerticleName = 'com.awareframework.micro.MainVerticle'
+def watchForChange = 'src/main/kotlin/**/*'
+def doOnChange = './gradlew classes'
+
+dependencies {
+  implementation platform("io.vertx:vertx-stack-depchain:4.5.11")  // Vert.x version
+
+  implementation "io.vertx:vertx-core"
+  implementation "io.vertx:vertx-config"
+  implementation "io.vertx:vertx-health-check"
+  implementation "io.vertx:vertx-web"
+  implementation "io.vertx:vertx-web-client"
+  implementation "io.vertx:vertx-mysql-client"
+  implementation "io.vertx:vertx-pg-client"
+  implementation "io.vertx:vertx-hazelcast"
+  implementation "io.vertx:vertx-auth-oauth2"
+  implementation "io.vertx:vertx-tcp-eventbus-bridge"
+  implementation "io.vertx:vertx-sockjs-service-proxy"
+  implementation "io.vertx:vertx-lang-kotlin"
+  implementation "io.vertx:vertx-mqtt"
+  implementation "io.vertx:vertx-web-templ-pebble"
+
+  // For SCRAM-SHA-256 passwords in PostgreSQL.
+  implementation "com.ongres.scram:client:2.1"
+
+  implementation "io.github.oshai:kotlin-logging-jvm:7.0.3"
+  implementation "org.slf4j:slf4j-api:2.0.16"
+  implementation "ch.qos.logback:logback-classic:1.5.12"
+  implementation "ch.qos.logback:logback-core:1.5.12"
+
+  implementation "commons-lang:commons-lang:2.6"  // Required for StringEscapeUtils
+
+  testImplementation "io.vertx:vertx-junit5"
+  testImplementation "org.junit.jupiter:junit-jupiter-api:5.11.3"
+  testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:5.11.3"
+}
+
+compileKotlin {
+  kotlinOptions.jvmTarget = '11'
+}
+
+compileTestKotlin {
+  kotlinOptions.jvmTarget = '11'
+}
+
+jar {
+  metaInf {
+    from rootProject.file("LICENSE")
+  }
+}
+
+shadowJar {
+  archiveClassifier = 'fat'
+  manifest {
+    attributes 'Main-Verticle': mainVerticleName
+  }
+  mergeServiceFiles {
+    include 'META-INF/services/io.vertx.core.spi.VerticleFactory'
+  }
+  metaInf {
+    from rootProject.file("LICENSE")
+  }
+}
+
+test {
+  useJUnitPlatform()
+  testLogging {
+    events 'PASSED', 'FAILED', 'SKIPPED', 'standardOut', 'standardError'
+    exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    showCauses = true
+    showExceptions = true
+    showStackTraces = true
+    showStandardStreams = true
+    outputs.upToDateWhen { false }
+  }
+}
+
+run {
+  args = ['run', mainVerticleName, "--redeploy=$watchForChange", "--launcher-class=$mainClassName", "--on-redeploy=$doOnChange"]
+}
