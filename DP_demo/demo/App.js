@@ -5,9 +5,20 @@ import RootNavigator from "./src/navigation/RootNavigator";
 import { useFonts, Archivo_400Regular, Archivo_500Medium, Archivo_600SemiBold } from '@expo-google-fonts/archivo'
 import { setCustomText } from 'react-native-global-props'
 import { DemoScreen } from './DemoScreen';
+import { AppState } from "react-native";
 
 
 export default function App() {
+
+  //Backend connection test (comment main app code to test or put above)
+//  return (
+//    <SafeAreaProvider>
+//      <SafeAreaView style={{ flex: 1 }}>
+//        <DemoScreen />
+//      </SafeAreaView>
+//    </SafeAreaProvider>
+//  );
+
   //custom font
   const [fontsLoaded] = useFonts({
     'Archivo': Archivo_400Regular,
@@ -35,14 +46,7 @@ export default function App() {
     </SafeAreaProvider>
   );
 
-  //Backend connection test (comment main app code to test or put above)
-  return (
-    <SafeAreaProvider>
-      <SafeAreaView style={{ flex: 1 }}>
-        <DemoScreen />
-      </SafeAreaView>
-    </SafeAreaProvider>
-  );
+
 }
 
 const styles = StyleSheet.create({
