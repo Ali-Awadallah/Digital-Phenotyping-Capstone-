@@ -4,20 +4,11 @@ import { AppProvider } from "./src/context/AppContext";
 import RootNavigator from "./src/navigation/RootNavigator";
 import { useFonts, Archivo_400Regular, Archivo_500Medium, Archivo_600SemiBold } from '@expo-google-fonts/archivo'
 import { setCustomText } from 'react-native-global-props'
-import { DemoScreen } from './DemoScreen';
+import SensorService from "./SensorsService.js"; //
 import { AppState } from "react-native";
 
 
 export default function App() {
-
-  //Backend connection test (comment main app code to test or put above)
-//  return (
-//    <SafeAreaProvider>
-//      <SafeAreaView style={{ flex: 1 }}>
-//        <DemoScreen />
-//      </SafeAreaView>
-//    </SafeAreaProvider>
-//  );
 
   //custom font
   const [fontsLoaded] = useFonts({
@@ -36,18 +27,22 @@ export default function App() {
   }
 
   //Main App
+  // ✅ MAIN APP + BACKGROUND SENSORS
   return (
     <SafeAreaProvider>
       <View style={styles.container}>
         <AppProvider>
+          {/* This runs in background, no UI */}
+          <SensorService />
+
+          {/* This is your real app UI */}
           <RootNavigator />
         </AppProvider>
       </View>
     </SafeAreaProvider>
   );
-
-
 }
+
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f0f4f8" },
