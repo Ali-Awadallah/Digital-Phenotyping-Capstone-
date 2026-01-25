@@ -178,4 +178,7 @@ dependencies {
     } else {
         implementation jscFlavor
     }
+    
+    // OkHttp for native HTTP requests to backend API
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

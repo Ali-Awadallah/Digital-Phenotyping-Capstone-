@@ -1,5 +1,5 @@
 // src/sensors/SensorService.js
-import React, { useEffect } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { AppState } from "react-native";
 import * as Battery from "expo-battery";
 import { Gyroscope, Accelerometer, Pedometer } from "expo-sensors";
@@ -14,9 +14,32 @@ import {
   sendLocation,
 } from "./awareAPI"; // <-- adjust path to your awareAPI.js
 
-const DEVICE_ID = "demo-phone";
+import BackgroundService from "./src/services/BackgroundService";
+
+// Default fallback device ID
+const DEFAULT_DEVICE_ID = "demo-phone";
 
 export default function SensorService() {
+  const deviceIdRef = useRef(DEFAULT_DEVICE_ID);
+
+  useEffect(() => {
+    // Get device ID from native module on mount
+    const initDeviceId = async () => {
+      try {
+        if (BackgroundService.isAvailable()) {
+          const nativeDeviceId = await BackgroundService.getDeviceId();
+          if (nativeDeviceId) {
+            deviceIdRef.current = nativeDeviceId;
+            console.log("Using device ID from native module:", nativeDeviceId);
+          }
+        }
+      } catch (e) {
+        console.log("Could not get native device ID, using default:", e.message);
+      }
+    };
+    initDeviceId();
+  }, []);
+
   useEffect(() => {
     let isMounted = true;
     let pollInterval = null;
@@ -39,8 +62,8 @@ export default function SensorService() {
 
         if (!isMounted) return;
 
-        await sendBatteryReading(DEVICE_ID, percentage);
-        await sendScreenState(DEVICE_ID, screenState);
+        await sendBatteryReading(deviceIdRef.current, percentage);
+        await sendScreenState(deviceIdRef.current, screenState);
       } catch (e) {
         console.log("Sensor send error:", e.message);
       }
@@ -55,7 +78,7 @@ export default function SensorService() {
       const magnitude = Math.sqrt(x * x + y * y + z * z);
       const payload = { ts: Date.now(), x, y, z, magnitude };
       console.log("Gyro reading:", payload);
-      sendGyroscope(DEVICE_ID, payload).catch((e) =>
+      sendGyroscope(deviceIdRef.current, payload).catch((e) =>
         console.log("Gyro send error:", e)
       );
     });
@@ -66,7 +89,7 @@ export default function SensorService() {
       const magnitude = Math.sqrt(x * x + y * y + z * z);
       const payload = { ts: Date.now(), x, y, z, magnitude };
       console.log("Accel reading:", payload);
-      sendAccelerometer(DEVICE_ID, payload).catch((e) =>
+      sendAccelerometer(deviceIdRef.current, payload).catch((e) =>
         console.log("Accel send error:", e)
       );
     });
@@ -80,7 +103,7 @@ export default function SensorService() {
       pedometerSub = Pedometer.watchStepCount((result) => {
         const payload = { ts: Date.now(), steps: result.steps };
         console.log("Pedometer reading:", payload);
-        sendPedometer(DEVICE_ID, payload).catch((e) =>
+        sendPedometer(deviceIdRef.current, payload).catch((e) =>
           console.log("Pedometer send error:", e)
         );
       });
@@ -109,7 +132,7 @@ export default function SensorService() {
           };
 
           console.log("Location reading:", payload);
-          sendLocation(DEVICE_ID, payload).catch((e) =>
+          sendLocation(deviceIdRef.current, payload).catch((e) =>
             console.log("Location send error:", e)
           );
         } catch (e) {

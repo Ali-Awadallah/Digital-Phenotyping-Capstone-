@@ -1,6 +1,6 @@
 // /DP_demo/demo/awareApi.js
 
-const API_BASE = "http://192.168.10.78:8080/api"; // VM-backend IP
+const API_BASE = "http://192.168.10.3:8080/api"; // Put your own machine IP here or VM-backend IP
 
 export async function testConnection() {
   const res = await fetch(`${API_BASE}/testing`);

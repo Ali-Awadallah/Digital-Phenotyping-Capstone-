@@ -32,6 +32,7 @@ class MainApplication : Application(), ReactApplication {
               // add(MyReactNativePackage())
               add(AppUsagePackage())
               add(NotificationAccessPackage())
+              add(BackgroundServicePackage())
             }
 
           override fun getJSMainModuleName(): String = ".expo/.virtual-metro-entry"

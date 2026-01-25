@@ -22,7 +22,29 @@ export default function SettingsScreen() {
     setCollectAppUsage,
     collectNotifications,
     setCollectNotifications,
+    isBackgroundServiceRunning,
+    startBackgroundService,
+    stopBackgroundService,
   } = useApp();
+
+  const handleBackgroundServiceToggle = async (next) => {
+    if (next) {
+      await startBackgroundService();
+    } else {
+      Alert.alert(
+        "Disable Background Collection?",
+        "This will stop sensor data collection when the app is minimized. Data accuracy may be affected.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Turn off",
+            style: "destructive",
+            onPress: async () => await stopBackgroundService(),
+          },
+        ]
+      );
+    }
+  };
 
   return (
     <ScreenContainer>
@@ -41,6 +63,32 @@ export default function SettingsScreen() {
         collection immediately.
       </Text>
 
+      {/* Background Service Toggle */}
+      <Text style={styles.sectionTitle}>Background Collection</Text>
+      <View style={[styles.sensorSection, { borderLeftColor: isBackgroundServiceRunning ? '#32D74B' : '#FF9500' }]}>
+        <View style={styles.settingsRow}>
+          <View style={styles.settingsLabelWrap}>
+            <MaterialIcons
+              name={isBackgroundServiceRunning ? "sync" : "sync-disabled"}
+              size={20}
+              color={isBackgroundServiceRunning ? "#32D74B" : "#FF9500"}
+            />
+            <View style={{ marginLeft: 8 }}>
+              <Text style={styles.settingsLabel}>Background Service</Text>
+              <Text style={styles.settingsSubLabel}>
+                {isBackgroundServiceRunning ? "Running - collecting data in background" : "Stopped - only collecting when app is open"}
+              </Text>
+            </View>
+          </View>
+          <Switch
+            value={isBackgroundServiceRunning}
+            onValueChange={handleBackgroundServiceToggle}
+            trackColor={{ false: '#767577', true: '#32D74B' }}
+          />
+        </View>
+      </View>
+
+      <Text style={styles.sectionTitle}>Sensor Toggles</Text>
       <View style={styles.sensorSection}>
         <Row
           label="Location"
@@ -177,9 +225,21 @@ const styles = StyleSheet.create({
   },
   settingsLabelWrap: { flexDirection: "row", alignItems: "center" },
   settingsLabel: {
-    marginLeft: 8,
     fontSize: 16,
     color: "#ccccccff",
     fontFamily: "Archivo-SemiBold",
+  },
+  settingsSubLabel: {
+    fontSize: 12,
+    color: "#888888",
+    fontFamily: "Archivo",
+    marginTop: 2,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    color: "#ccccccff",
+    fontFamily: "Archivo-Medium",
+    marginTop: 16,
+    marginBottom: 8,
   },
 });

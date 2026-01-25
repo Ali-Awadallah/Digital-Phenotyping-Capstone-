@@ -15,6 +15,7 @@ import { Accelerometer, Gyroscope, Pedometer } from "expo-sensors";
 import * as Battery from "expo-battery";
 import { useScreenEventsEx2 } from "../hooks/useScreenEventsEx2";
 import { useNotificationEventsEx2 } from "../hooks/useNotificationEventsEx2";
+import BackgroundService from "../services/BackgroundService";
 
 // native modules
 const AppUsageNative = NativeModules.AppUsage;
@@ -48,6 +49,10 @@ export function AppProvider({ children }) {
   const [collectAppUsage, setCollectAppUsage] = useState(true);
   const [collectNotifications, setCollectNotifications] = useState(true);
 
+  // Background service state
+  const [isBackgroundServiceRunning, setIsBackgroundServiceRunning] = useState(false);
+  const [backgroundServiceEnabled, setBackgroundServiceEnabled] = useState(false);
+
   // Load/save preferences
   const [prefsLoaded, setPrefsLoaded] = useState(false);
   useEffect(() => {
@@ -72,8 +77,10 @@ export function AppProvider({ children }) {
             setCollectAppUsage(p.collectAppUsage);
           if (typeof p.collectNotifications === "boolean")
             setCollectNotifications(p.collectNotifications);
+          if (typeof p.backgroundServiceEnabled === "boolean")
+            setBackgroundServiceEnabled(p.backgroundServiceEnabled);
         }
-      } catch {}
+      } catch { }
       setPrefsLoaded(true);
     })();
   }, []);
@@ -89,8 +96,9 @@ export function AppProvider({ children }) {
       collectScreenEvents,
       collectAppUsage,
       collectNotifications,
+      backgroundServiceEnabled,
     };
-    AsyncStorage.setItem(PREFS_KEY, JSON.stringify(data)).catch(() => {});
+    AsyncStorage.setItem(PREFS_KEY, JSON.stringify(data)).catch(() => { });
   }, [
     prefsLoaded,
     collectLocation,
@@ -101,7 +109,59 @@ export function AppProvider({ children }) {
     collectScreenEvents,
     collectAppUsage,
     collectNotifications,
+    backgroundServiceEnabled,
   ]);
+
+  // Background service management
+  useEffect(() => {
+    if (!prefsLoaded) return;
+    // Check initial service status
+    const checkStatus = async () => {
+      if (BackgroundService.isAvailable()) {
+        const running = await BackgroundService.isServiceRunning();
+        setIsBackgroundServiceRunning(running);
+      }
+    };
+    checkStatus();
+  }, [prefsLoaded]);
+
+  const startBackgroundService = async () => {
+    if (!BackgroundService.isAvailable()) {
+      console.warn('Background service not available on this platform');
+      return false;
+    }
+    try {
+      await BackgroundService.startBackgroundCollection();
+      setIsBackgroundServiceRunning(true);
+      setBackgroundServiceEnabled(true);
+      return true;
+    } catch (e) {
+      console.error('Failed to start background service:', e);
+      return false;
+    }
+  };
+
+  const stopBackgroundService = async () => {
+    if (!BackgroundService.isAvailable()) {
+      return false;
+    }
+    try {
+      await BackgroundService.stopBackgroundCollection();
+      setIsBackgroundServiceRunning(false);
+      setBackgroundServiceEnabled(false);
+      return true;
+    } catch (e) {
+      console.error('Failed to stop background service:', e);
+      return false;
+    }
+  };
+
+  const getBackgroundSensorData = async (sensorType) => {
+    if (!BackgroundService.isAvailable()) {
+      return [];
+    }
+    return await BackgroundService.getCollectedData(sensorType);
+  };
 
   // OS-level location services watcher: alert when device location is OFF
   useEffect(() => {
@@ -128,7 +188,7 @@ export function AppProvider({ children }) {
         if (enabled) {
           serviceAlertedRef.current = false;
         }
-      } catch {}
+      } catch { }
     };
     // initial and periodic checks
     checkServices();
@@ -177,9 +237,9 @@ export function AppProvider({ children }) {
               if (info.exists)
                 await FileSystem.deleteAsync(p, { idempotent: true });
             }
-          } catch {}
+          } catch { }
         }
-      } catch {}
+      } catch { }
     })();
   }, [prefsLoaded, collectScreenEvents]);
 
@@ -211,9 +271,9 @@ export function AppProvider({ children }) {
               if (info.exists)
                 await FileSystem.deleteAsync(p, { idempotent: true });
             }
-          } catch {}
+          } catch { }
         }
-      } catch {}
+      } catch { }
     })();
   }, [prefsLoaded, collectNotifications]);
 
@@ -266,7 +326,7 @@ export function AppProvider({ children }) {
             JSON.stringify({ date: today, steps: 0 })
           );
         }
-      } catch {}
+      } catch { }
     })();
   }, []);
 
@@ -282,7 +342,7 @@ export function AppProvider({ children }) {
             locationSubRef.current &&
               locationSubRef.current.remove &&
               locationSubRef.current.remove();
-          } catch {}
+          } catch { }
           locationSubRef.current = null;
           if (!cancelled) setIsLocationEnabled(false);
           return;
@@ -296,7 +356,7 @@ export function AppProvider({ children }) {
           locationSubRef.current &&
             locationSubRef.current.remove &&
             locationSubRef.current.remove();
-        } catch {}
+        } catch { }
         const sub = await Location.watchPositionAsync(
           {
             accuracy: Location.Accuracy.High,
@@ -320,7 +380,7 @@ export function AppProvider({ children }) {
         locationSubRef.current &&
           locationSubRef.current.remove &&
           locationSubRef.current.remove();
-      } catch {}
+      } catch { }
       locationSubRef.current = null;
     };
   }, [prefsLoaded, collectLocation]);
@@ -338,7 +398,7 @@ export function AppProvider({ children }) {
             accelerometerSubRef.current &&
               accelerometerSubRef.current.remove &&
               accelerometerSubRef.current.remove();
-          } catch {}
+          } catch { }
           accelerometerSubRef.current = null;
           if (!cancelled) setAccelerometerActive(false);
           return;
@@ -348,7 +408,7 @@ export function AppProvider({ children }) {
           accelerometerSubRef.current &&
             accelerometerSubRef.current.remove &&
             accelerometerSubRef.current.remove();
-        } catch {}
+        } catch { }
         const sub = Accelerometer.addListener((data) =>
           setAccelerometerData(data)
         );
@@ -364,7 +424,7 @@ export function AppProvider({ children }) {
         accelerometerSubRef.current &&
           accelerometerSubRef.current.remove &&
           accelerometerSubRef.current.remove();
-      } catch {}
+      } catch { }
       accelerometerSubRef.current = null;
     };
   }, [prefsLoaded, collectAccelerometer]);
@@ -382,7 +442,7 @@ export function AppProvider({ children }) {
             gyroscopeSubRef.current &&
               gyroscopeSubRef.current.remove &&
               gyroscopeSubRef.current.remove();
-          } catch {}
+          } catch { }
           gyroscopeSubRef.current = null;
           if (!cancelled) setGyroscopeActive(false);
           return;
@@ -392,7 +452,7 @@ export function AppProvider({ children }) {
           gyroscopeSubRef.current &&
             gyroscopeSubRef.current.remove &&
             gyroscopeSubRef.current.remove();
-        } catch {}
+        } catch { }
         const sub = Gyroscope.addListener((data) => setGyroscopeData(data));
         gyroscopeSubRef.current = sub;
         if (!cancelled) setGyroscopeActive(true);
@@ -406,7 +466,7 @@ export function AppProvider({ children }) {
         gyroscopeSubRef.current &&
           gyroscopeSubRef.current.remove &&
           gyroscopeSubRef.current.remove();
-      } catch {}
+      } catch { }
       gyroscopeSubRef.current = null;
     };
   }, [prefsLoaded, collectGyroscope]);
@@ -447,10 +507,10 @@ export function AppProvider({ children }) {
     return () => {
       try {
         levelSub && levelSub.remove && levelSub.remove();
-      } catch {}
+      } catch { }
       try {
         stateSub && stateSub.remove && stateSub.remove();
-      } catch {}
+      } catch { }
     };
   }, [prefsLoaded, collectBattery]);
 
@@ -473,7 +533,7 @@ export function AppProvider({ children }) {
               "pedometer_v1",
               JSON.stringify({ date: t, steps: 0 })
             );
-          } catch {}
+          } catch { }
         }
         const end = new Date();
         const start = new Date();
@@ -494,7 +554,7 @@ export function AppProvider({ children }) {
               "pedometer_v1",
               JSON.stringify({ date: t, steps: daily })
             );
-          } catch {}
+          } catch { }
         } else {
           const est =
             (pedoBaselineRef.current || 0) + (stepsSinceOpenRef.current || 0);
@@ -504,7 +564,7 @@ export function AppProvider({ children }) {
               "pedometer_v1",
               JSON.stringify({ date: pedoDateRef.current || t, steps: est })
             );
-          } catch {}
+          } catch { }
         }
       } catch (e) {
         // ignore
@@ -544,7 +604,7 @@ export function AppProvider({ children }) {
     return () => {
       try {
         stepSub && stepSub.remove && stepSub.remove();
-      } catch {}
+      } catch { }
       if (intervalId) clearInterval(intervalId);
     };
   }, [prefsLoaded, collectPedometer]);
@@ -573,20 +633,20 @@ export function AppProvider({ children }) {
   const openUsageAccess = async () => {
     try {
       AppUsageNative?.openUsageAccessSettings();
-    } catch (e) {}
+    } catch (e) { }
   };
 
   const openNotificationAccess = async () => {
     try {
       NotificationAccessNative?.openSettings?.();
-    } catch (e) {}
+    } catch (e) { }
   };
 
   const checkNotificationAccess = async () => {
     try {
       const granted = await NotificationAccessNative?.hasAccess?.();
       setHasNotificationAccess(!!granted);
-    } catch (e) {}
+    } catch (e) { }
   };
 
   useEffect(() => {
@@ -689,6 +749,12 @@ export function AppProvider({ children }) {
       notificationEvents,
       notificationMeta,
       refreshNotificationEvents,
+      // background service
+      isBackgroundServiceRunning,
+      backgroundServiceEnabled,
+      startBackgroundService,
+      stopBackgroundService,
+      getBackgroundSensorData,
     }),
     [
       activeTab,
@@ -719,6 +785,8 @@ export function AppProvider({ children }) {
       screenMeta,
       notificationEvents,
       notificationMeta,
+      isBackgroundServiceRunning,
+      backgroundServiceEnabled,
     ]
   );
 
