@@ -1,0 +1,73 @@
+📘 AWARE-Micro – Customized Build for Digital Phenotyping
+
+This repository contains a customized version of the AWARE Microservice designed specifically for our Digital Phenotyping Capstone project. It integrates seamlessly with the AWARE backend running on our VMware environment and enables secure processing of sensor-based behavioral data.
+
+*NOTE: The only 2 files modified for now are ~/aware-micro/aware-config.json and ~/aware-micro/src/main/kotlin/com/awareframework/micro/MainVerticle.kt
+
+(aware-config.json has the database credintials, and MainVerticle.kt has the back-end RESTful APIs along with others)
+
+------
+
+📦 Setup & Installation (better on VM -> this is for server-side)
+1. Clone the Repository
+git clone https://github.com/PiranhaQTR/Digital-Phenotyping-Backend.git
+cd Digital-Phenotyping-Backend
+
+2. Install Dependencies
+npm install
+
+3. Run the server:
+./start-server.bat
+
+------
+
+🔌 To Connect to This AWARE Backend (from client-side):
+
+Digital-Phenotyping-Backend Aware-micro server must be running already in order to connect to it.
+Set your backend URL in your environment config (from client-side, in both files: awareAPI.js and DemoScreen.js) using the IP address of the VM you're on:
+
+AWARE_BASE_URL=http://<VM-IP>:8080
+
+------
+
+📄 API Testing Table (Full Curl Commands):
+Sensor API	                      Curl Command
+Battery	                          bash<br>curl -X POST "http://192.168.10.78:8080/api/battery" \ <br> -H "Content-Type: application/json" \ <br> -d '{<br> "device_id": "demo-phone",<br> "percentage": 85,<br> "ts": 1732300000000<br> }'<br>
+Screen State	                    bash<br>curl -X POST "http://192.168.10.78:8080/api/screen" \ <br> -H "Content-Type: application/json" \ <br> -d '{<br> "device_id": "demo-phone",<br> "state": "ON",<br> "ts": 1732300000000<br> }'<br>
+Gyroscope	                        bash<br>curl -X POST "http://192.168.10.78:8080/api/gyroscope" \ <br> -H "Content-Type: application/json" \ <br> -d '{<br> "device_id": "demo-phone",<br> "ts": 1732300000000,<br> "x": 0.01,<br> "y": 0.02,<br> "z": 0.03,<br> "magnitude": 9.8<br> }'<br>
+Accelerometer	                    bash<br>curl -X POST "http://192.168.10.78:8080/api/accelerometer" \ <br> -H "Content-Type: application/json" \ <br> -d '{<br> "device_id": "demo-phone",<br> "ts": 1732300000000,<br> "x": 0.10,<br> "y": -0.10,<br> "z": 9.81,<br> "magnitude": 9.83<br> }'<br>
+Pedometer	                        bash<br>curl -X POST "http://192.168.10.78:8080/api/pedometer" \ <br> -H "Content-Type: application/json" \ <br> -d '{<br> "device_id": "demo-phone",<br> "ts": 1732300000000,<br> "steps": 250<br> }'<br>
+Location	                        bash<br>curl -X POST "http://192.168.10.78:8080/api/location" \ <br> -H "Content-Type: application/json" \ <br> -d '{<br> "device_id": "demo-phone",<br> "ts": 1732300000000,<br> "latitude": 25.2854,<br> "longitude": 51.5310,<br> "accuracy": 5,<br> "altitude": 12,<br> "speed": 1.2<br> }'<br>
+
+------
+
+Your mobile application or ingestion services will push sensor data to this backend automatically once configured.
+
+📊 Sensor Data Supported:
+Category	                      Sensors Included
+Device Sensors	                  Accelerometer, Gyroscope, Pedometer, Location
+Software Sensors	              Notifications, Screen Events, Battery Status
+
+These are stored in AWARE’s default MySQL tables and can be queried for analytics.
+
+------
+
+🗄️ Viewing AWARE MySQL Database in DBeaver
+You can explore all AWARE sensor tables (accelerometer, gyroscope, battery, location, notifications, etc.) directly through DBeaver, using the credentials defined in your aware-config.json file.
+
+1. Open DBeaver:
+If not installed, download it here:
+https://dbeaver.io/download/
+
+2. Launch DBeaver
+
+3. Click Database → New Connection
+
+4. Select MySQL (or MariaDB)
+
+5. Enter your credentials aware-config.json
+
+6. Test the Connection: 
+Click Test Connection.
+You should get a Success window.
+Then click Finish.
