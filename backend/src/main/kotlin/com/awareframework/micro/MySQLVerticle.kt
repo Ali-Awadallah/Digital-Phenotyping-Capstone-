@@ -101,6 +101,147 @@ class MySQLVerticle : AbstractVerticle() {
             receivedMessage.reply(response.result())
           }
         }
+
+        // ---- GEOFENCE ALERT SYSTEM TABLES AND HANDLERS ----
+        
+        // Create geofence system tables on startup
+        createParticipantsTable()
+        createRedZonesTable()
+        createGeofenceAlertsTable()
+
+        // Get all participants
+        eventBus.consumer<JsonObject>("getParticipants") { receivedMessage ->
+          getAllParticipants().onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(response.result())
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to get participants")
+            }
+          }
+        }
+
+        // Get participant by device_id
+        eventBus.consumer<JsonObject>("getParticipantByDevice") { receivedMessage ->
+          val deviceId = receivedMessage.body().getString("device_id")
+          getParticipantByDeviceId(deviceId).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(response.result())
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to get participant")
+            }
+          }
+        }
+
+        // Insert/update participant
+        eventBus.consumer<JsonObject>("upsertParticipant") { receivedMessage ->
+          val data = receivedMessage.body()
+          upsertParticipant(data).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(JsonObject().put("ok", true).put("participant_id", response.result()))
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to upsert participant")
+            }
+          }
+        }
+
+        // Get red zones for participant (includes global zones)
+        eventBus.consumer<JsonObject>("getRedZones") { receivedMessage ->
+          val participantId = receivedMessage.body().getString("participant_id")
+          getRedZonesForParticipant(participantId).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(response.result())
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to get red zones")
+            }
+          }
+        }
+
+        // Insert red zone
+        eventBus.consumer<JsonObject>("insertRedZone") { receivedMessage ->
+          val data = receivedMessage.body()
+          insertRedZone(data).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(JsonObject().put("ok", true).put("zone_id", response.result()))
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to insert red zone")
+            }
+          }
+        }
+
+        // Delete red zone
+        eventBus.consumer<JsonObject>("deleteRedZone") { receivedMessage ->
+          val zoneId = receivedMessage.body().getString("zone_id")
+          deleteRedZone(zoneId).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(JsonObject().put("ok", true))
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to delete red zone")
+            }
+          }
+        }
+
+        // Get geofence alerts
+        eventBus.consumer<JsonObject>("getGeofenceAlerts") { receivedMessage ->
+          val activeOnly = receivedMessage.body().getBoolean("active_only", false)
+          getGeofenceAlerts(activeOnly).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(response.result())
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to get alerts")
+            }
+          }
+        }
+
+        // Insert geofence alert
+        eventBus.consumer<JsonObject>("insertGeofenceAlert") { receivedMessage ->
+          val data = receivedMessage.body()
+          insertGeofenceAlert(data).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(JsonObject().put("ok", true).put("alert_id", response.result()))
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to insert alert")
+            }
+          }
+        }
+
+        // Acknowledge alert
+        eventBus.consumer<JsonObject>("acknowledgeAlert") { receivedMessage ->
+          val alertId = receivedMessage.body().getString("alert_id")
+          val acknowledgedBy = receivedMessage.body().getString("acknowledged_by", "admin")
+          acknowledgeAlert(alertId, acknowledgedBy).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(JsonObject().put("ok", true))
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to acknowledge alert")
+            }
+          }
+        }
+
+        // Check for recent alert (duplicate prevention)
+        eventBus.consumer<JsonObject>("checkRecentAlert") { receivedMessage ->
+          val participantId = receivedMessage.body().getString("participant_id")
+          val zoneId = receivedMessage.body().getString("zone_id")
+          val windowMinutes = receivedMessage.body().getInteger("window_minutes", 30)
+          checkRecentAlert(participantId, zoneId, windowMinutes).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(JsonObject().put("exists", response.result()))
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to check recent alert")
+            }
+          }
+        }
+
+        // Get latest location for participant
+        eventBus.consumer<JsonObject>("getLatestLocation") { receivedMessage ->
+          val deviceId = receivedMessage.body().getString("device_id")
+          getLatestLocation(deviceId).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(response.result())
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to get location")
+            }
+          }
+        }
       }
     }
   }
@@ -261,6 +402,453 @@ class MySQLVerticle : AbstractVerticle() {
       .onFailure { e ->
         logger.error(e) { "Failed to create table." }
       }
+  }
+
+  // ---- GEOFENCE SYSTEM TABLE CREATION ----
+
+  fun createParticipantsTable(): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          CREATE TABLE IF NOT EXISTS `participants` (
+            `participant_id` VARCHAR(36) PRIMARY KEY,
+            `device_id` VARCHAR(128) NOT NULL UNIQUE,
+            `name` VARCHAR(100) NOT NULL,
+            `red_zone_radius` INT DEFAULT 300,
+            `status` ENUM('active', 'inactive') DEFAULT 'active',
+            `risk_level` ENUM('low', 'moderate', 'high') DEFAULT 'low',
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX `idx_device` (`device_id`),
+            INDEX `idx_status` (`status`)
+          )
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Created participants table" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to create participants table" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun createRedZonesTable(): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          CREATE TABLE IF NOT EXISTS `red_zones` (
+            `zone_id` VARCHAR(36) PRIMARY KEY,
+            `participant_id` VARCHAR(36) NULL,
+            `name` VARCHAR(100) NOT NULL,
+            `latitude` DOUBLE NOT NULL,
+            `longitude` DOUBLE NOT NULL,
+            `radius` INT DEFAULT 300,
+            `zone_type` ENUM('bar', 'dealer', 'relapse', 'custom') DEFAULT 'custom',
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX `idx_participant` (`participant_id`)
+          )
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Created red_zones table" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to create red_zones table" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun createGeofenceAlertsTable(): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          CREATE TABLE IF NOT EXISTS `geofence_alerts` (
+            `alert_id` VARCHAR(36) PRIMARY KEY,
+            `participant_id` VARCHAR(36) NOT NULL,
+            `zone_id` VARCHAR(36) NOT NULL,
+            `zone_name` VARCHAR(100),
+            `latitude` DOUBLE NOT NULL,
+            `longitude` DOUBLE NOT NULL,
+            `distance` DOUBLE NOT NULL,
+            `triggered_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            `acknowledged` BOOLEAN DEFAULT FALSE,
+            `acknowledged_by` VARCHAR(100) NULL,
+            `acknowledged_at` TIMESTAMP NULL,
+            INDEX `idx_participant` (`participant_id`),
+            INDEX `idx_acknowledged` (`acknowledged`),
+            INDEX `idx_triggered` (`triggered_at`)
+          )
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Created geofence_alerts table" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to create geofence_alerts table" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  // ---- PARTICIPANT OPERATIONS ----
+
+  fun getAllParticipants(): Future<JsonArray> {
+    val promise = Promise.promise<JsonArray>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        connection.query("SELECT * FROM participants ORDER BY name ASC").execute()
+          .onSuccess { rows ->
+            val result = JsonArray(StreamSupport.stream(rows.spliterator(), false)
+              .map { row -> row.toJson() }
+              .collect(Collectors.toList()))
+            promise.complete(result)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to get participants" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun getParticipantByDeviceId(deviceId: String): Future<JsonObject?> {
+    val promise = Promise.promise<JsonObject?>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        connection.query("SELECT * FROM participants WHERE device_id = '$deviceId' LIMIT 1").execute()
+          .onSuccess { rows ->
+            val result = rows.firstOrNull()?.toJson()
+            promise.complete(result)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to get participant by device_id" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun upsertParticipant(data: JsonObject): Future<String> {
+    val promise = Promise.promise<String>()
+    val participantId = data.getString("participant_id") ?: java.util.UUID.randomUUID().toString()
+    val deviceId = data.getString("device_id")
+    val name = data.getString("name", "Unknown")
+    val redZoneRadius = data.getInteger("red_zone_radius", 300)
+    val status = data.getString("status", "active")
+    val riskLevel = data.getString("risk_level", "low")
+
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          INSERT INTO participants (participant_id, device_id, name, red_zone_radius, status, risk_level)
+          VALUES ('$participantId', '$deviceId', '$name', $redZoneRadius, '$status', '$riskLevel')
+          ON DUPLICATE KEY UPDATE
+            name = VALUES(name),
+            red_zone_radius = VALUES(red_zone_radius),
+            status = VALUES(status),
+            risk_level = VALUES(risk_level)
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Upserted participant: $participantId" }
+            promise.complete(participantId)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to upsert participant" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  // ---- RED ZONE OPERATIONS ----
+
+  fun getRedZonesForParticipant(participantId: String?): Future<JsonArray> {
+    val promise = Promise.promise<JsonArray>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        // Get zones for this participant + global zones (participant_id IS NULL)
+        val whereClause = if (participantId != null) {
+          "WHERE participant_id = '$participantId' OR participant_id IS NULL"
+        } else {
+          ""
+        }
+        connection.query("SELECT * FROM red_zones $whereClause ORDER BY name ASC").execute()
+          .onSuccess { rows ->
+            val result = JsonArray(StreamSupport.stream(rows.spliterator(), false)
+              .map { row -> row.toJson() }
+              .collect(Collectors.toList()))
+            promise.complete(result)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to get red zones" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun insertRedZone(data: JsonObject): Future<String> {
+    val promise = Promise.promise<String>()
+    val zoneId = data.getString("zone_id") ?: java.util.UUID.randomUUID().toString()
+    val participantId = data.getString("participant_id")
+    val name = data.getString("name", "Unnamed Zone")
+    val latitude = data.getDouble("latitude")
+    val longitude = data.getDouble("longitude")
+    val radius = data.getInteger("radius", 300)
+    val zoneType = data.getString("zone_type", "custom")
+
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val participantVal = if (participantId != null) "'$participantId'" else "NULL"
+        val query = """
+          INSERT INTO red_zones (zone_id, participant_id, name, latitude, longitude, radius, zone_type)
+          VALUES ('$zoneId', $participantVal, '$name', $latitude, $longitude, $radius, '$zoneType')
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Inserted red zone: $zoneId" }
+            promise.complete(zoneId)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to insert red zone" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun deleteRedZone(zoneId: String): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        connection.query("DELETE FROM red_zones WHERE zone_id = '$zoneId'").execute()
+          .onSuccess {
+            logger.info { "Deleted red zone: $zoneId" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to delete red zone" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  // ---- GEOFENCE ALERT OPERATIONS ----
+
+  fun getGeofenceAlerts(activeOnly: Boolean): Future<JsonArray> {
+    val promise = Promise.promise<JsonArray>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val whereClause = if (activeOnly) "WHERE acknowledged = FALSE" else ""
+        connection.query("""
+          SELECT a.*, p.name as participant_name, p.device_id
+          FROM geofence_alerts a
+          LEFT JOIN participants p ON a.participant_id = p.participant_id
+          $whereClause
+          ORDER BY triggered_at DESC
+          LIMIT 100
+        """.trimIndent()).execute()
+          .onSuccess { rows ->
+            val result = JsonArray(StreamSupport.stream(rows.spliterator(), false)
+              .map { row -> row.toJson() }
+              .collect(Collectors.toList()))
+            promise.complete(result)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to get geofence alerts" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun insertGeofenceAlert(data: JsonObject): Future<String> {
+    val promise = Promise.promise<String>()
+    val alertId = data.getString("alert_id") ?: java.util.UUID.randomUUID().toString()
+    val participantId = data.getString("participant_id")
+    val zoneId = data.getString("zone_id")
+    val zoneName = data.getString("zone_name", "")
+    val latitude = data.getDouble("latitude")
+    val longitude = data.getDouble("longitude")
+    val distance = data.getDouble("distance")
+
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          INSERT INTO geofence_alerts (alert_id, participant_id, zone_id, zone_name, latitude, longitude, distance)
+          VALUES ('$alertId', '$participantId', '$zoneId', '$zoneName', $latitude, $longitude, $distance)
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Inserted geofence alert: $alertId for participant $participantId" }
+            promise.complete(alertId)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to insert geofence alert" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun acknowledgeAlert(alertId: String, acknowledgedBy: String): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          UPDATE geofence_alerts 
+          SET acknowledged = TRUE, acknowledged_by = '$acknowledgedBy', acknowledged_at = NOW()
+          WHERE alert_id = '$alertId'
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Acknowledged alert: $alertId by $acknowledgedBy" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to acknowledge alert" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun checkRecentAlert(participantId: String, zoneId: String, windowMinutes: Int): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          SELECT COUNT(*) as count FROM geofence_alerts 
+          WHERE participant_id = '$participantId' 
+          AND zone_id = '$zoneId' 
+          AND triggered_at > DATE_SUB(NOW(), INTERVAL $windowMinutes MINUTE)
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess { rows ->
+            val count = rows.firstOrNull()?.getInteger("count") ?: 0
+            promise.complete(count > 0)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to check recent alert" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun getLatestLocation(deviceId: String): Future<JsonObject?> {
+    val promise = Promise.promise<JsonObject?>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        connection.query("SELECT * FROM location WHERE device_id = '$deviceId' ORDER BY timestamp DESC LIMIT 1").execute()
+          .onSuccess { rows ->
+            val result = rows.firstOrNull()?.toJson()
+            promise.complete(result)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to get latest location" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
   }
 
   override fun stop() {

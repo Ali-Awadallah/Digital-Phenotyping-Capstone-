@@ -320,7 +320,7 @@ class MainVerticle : AbstractVerticle() {
           }
         }
 
-        // POST /api/location
+        // POST /api/location - Store location and check geofence
         api.post("/location").handler { ctx ->
           try {
             val body = ctx.bodyAsJson
@@ -352,6 +352,9 @@ class MainVerticle : AbstractVerticle() {
 
             logger.info { "Location from $deviceId: lat=$latitude lon=$longitude acc=$accuracy speed=$speed" }
 
+            // Check geofences for this device
+            checkGeofence(deviceId, latitude, longitude)
+
             ctx.response()
               .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
               .end(JsonObject().put("ok", true).encode())
@@ -360,6 +363,204 @@ class MainVerticle : AbstractVerticle() {
             ctx.response().setStatusCode(400)
               .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
               .end(JsonObject().put("error", e.message).encode())
+          }
+        }
+
+        // ---- GEOFENCE ALERT SYSTEM API ENDPOINTS ----
+
+        // GET /api/participants - List all participants
+        api.get("/participants").handler { ctx ->
+          eventBus.request<JsonArray>("getParticipants", JsonObject()) { ar ->
+            if (ar.succeeded()) {
+              ctx.response()
+                .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                .end(ar.result().body().encode())
+            } else {
+              ctx.response().setStatusCode(500)
+                .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                .end(JsonObject().put("error", ar.cause().message).encode())
+            }
+          }
+        }
+
+        // GET /api/participants/:deviceId - Get participant by device ID
+        api.get("/participants/:deviceId").handler { ctx ->
+          val deviceId = ctx.pathParam("deviceId")
+          eventBus.request<JsonObject?>("getParticipantByDevice", JsonObject().put("device_id", deviceId)) { ar ->
+            if (ar.succeeded()) {
+              val result = ar.result().body()
+              if (result != null) {
+                ctx.response()
+                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(result.encode())
+              } else {
+                ctx.response().setStatusCode(404)
+                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("error", "Participant not found").encode())
+              }
+            } else {
+              ctx.response().setStatusCode(500)
+                .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                .end(JsonObject().put("error", ar.cause().message).encode())
+            }
+          }
+        }
+
+        // POST /api/participants - Create/update participant
+        api.post("/participants").handler { ctx ->
+          try {
+            val body = ctx.bodyAsJson
+            eventBus.request<JsonObject>("upsertParticipant", body) { ar ->
+              if (ar.succeeded()) {
+                ctx.response().setStatusCode(201)
+                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(ar.result().body().encode())
+              } else {
+                ctx.response().setStatusCode(500)
+                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("error", ar.cause().message).encode())
+              }
+            }
+          } catch (e: Exception) {
+            ctx.response().setStatusCode(400)
+              .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+              .end(JsonObject().put("error", e.message).encode())
+          }
+        }
+
+        // PUT /api/participants/:participantId - Update participant
+        api.put("/participants/:participantId").handler { ctx ->
+          try {
+            val participantId = ctx.pathParam("participantId")
+            val body = ctx.bodyAsJson.put("participant_id", participantId)
+            eventBus.request<JsonObject>("upsertParticipant", body) { ar ->
+              if (ar.succeeded()) {
+                ctx.response()
+                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(ar.result().body().encode())
+              } else {
+                ctx.response().setStatusCode(500)
+                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("error", ar.cause().message).encode())
+              }
+            }
+          } catch (e: Exception) {
+            ctx.response().setStatusCode(400)
+              .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+              .end(JsonObject().put("error", e.message).encode())
+          }
+        }
+
+        // GET /api/zones - List all red zones
+        api.get("/zones").handler { ctx ->
+          val participantId = ctx.queryParam("participant_id").firstOrNull()
+          eventBus.request<JsonArray>("getRedZones", JsonObject().put("participant_id", participantId)) { ar ->
+            if (ar.succeeded()) {
+              ctx.response()
+                .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                .end(ar.result().body().encode())
+            } else {
+              ctx.response().setStatusCode(500)
+                .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                .end(JsonObject().put("error", ar.cause().message).encode())
+            }
+          }
+        }
+
+        // POST /api/zones - Create red zone
+        api.post("/zones").handler { ctx ->
+          try {
+            val body = ctx.bodyAsJson
+            eventBus.request<JsonObject>("insertRedZone", body) { ar ->
+              if (ar.succeeded()) {
+                ctx.response().setStatusCode(201)
+                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(ar.result().body().encode())
+              } else {
+                ctx.response().setStatusCode(500)
+                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("error", ar.cause().message).encode())
+              }
+            }
+          } catch (e: Exception) {
+            ctx.response().setStatusCode(400)
+              .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+              .end(JsonObject().put("error", e.message).encode())
+          }
+        }
+
+        // DELETE /api/zones/:zoneId - Delete red zone
+        api.delete("/zones/:zoneId").handler { ctx ->
+          val zoneId = ctx.pathParam("zoneId")
+          eventBus.request<JsonObject>("deleteRedZone", JsonObject().put("zone_id", zoneId)) { ar ->
+            if (ar.succeeded()) {
+              ctx.response()
+                .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                .end(ar.result().body().encode())
+            } else {
+              ctx.response().setStatusCode(500)
+                .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                .end(JsonObject().put("error", ar.cause().message).encode())
+            }
+          }
+        }
+
+        // GET /api/alerts - List geofence alerts
+        api.get("/alerts").handler { ctx ->
+          val activeOnly = ctx.queryParam("active").firstOrNull()?.toBoolean() ?: false
+          eventBus.request<JsonArray>("getGeofenceAlerts", JsonObject().put("active_only", activeOnly)) { ar ->
+            if (ar.succeeded()) {
+              ctx.response()
+                .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                .end(ar.result().body().encode())
+            } else {
+              ctx.response().setStatusCode(500)
+                .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                .end(JsonObject().put("error", ar.cause().message).encode())
+            }
+          }
+        }
+
+        // POST /api/alerts/:alertId/acknowledge - Acknowledge alert
+        api.post("/alerts/:alertId/acknowledge").handler { ctx ->
+          val alertId = ctx.pathParam("alertId")
+          val acknowledgedBy = ctx.queryParam("by").firstOrNull() ?: "admin"
+          eventBus.request<JsonObject>("acknowledgeAlert", JsonObject()
+            .put("alert_id", alertId)
+            .put("acknowledged_by", acknowledgedBy)
+          ) { ar ->
+            if (ar.succeeded()) {
+              ctx.response()
+                .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                .end(ar.result().body().encode())
+            } else {
+              ctx.response().setStatusCode(500)
+                .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                .end(JsonObject().put("error", ar.cause().message).encode())
+            }
+          }
+        }
+
+        // GET /api/participants/:deviceId/location - Get latest location for participant
+        api.get("/participants/:deviceId/location").handler { ctx ->
+          val deviceId = ctx.pathParam("deviceId")
+          eventBus.request<JsonObject?>("getLatestLocation", JsonObject().put("device_id", deviceId)) { ar ->
+            if (ar.succeeded()) {
+              val result = ar.result().body()
+              if (result != null) {
+                ctx.response()
+                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(result.encode())
+              } else {
+                ctx.response().setStatusCode(404)
+                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("error", "No location found").encode())
+              }
+            } else {
+              ctx.response().setStatusCode(500)
+                .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                .end(JsonObject().put("error", ar.cause().message).encode())
+            }
           }
         }
 
@@ -969,5 +1170,97 @@ class MainVerticle : AbstractVerticle() {
       return serverConfig.getInteger("external_server_port")
     }
     return serverConfig.getInteger("server_port")
+  }
+
+  // ---- GEOFENCE DETECTION LOGIC ----
+
+  /**
+   * Calculate distance between two coordinates using Haversine formula
+   * @return distance in meters
+   */
+  private fun haversineDistance(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+    val R = 6371000.0 // Earth radius in meters
+    val dLat = Math.toRadians(lat2 - lat1)
+    val dLon = Math.toRadians(lon2 - lon1)
+    val a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2)
+    val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+    return R * c
+  }
+
+  /**
+   * Check if device location is within any red zone and create alerts
+   */
+  private fun checkGeofence(deviceId: String, latitude: Double, longitude: Double) {
+    val eventBus = vertx.eventBus()
+
+    // First, get the participant for this device
+    eventBus.request<JsonObject?>("getParticipantByDevice", JsonObject().put("device_id", deviceId)) { participantResult ->
+      if (participantResult.succeeded()) {
+        val participant = participantResult.result().body()
+        if (participant == null) {
+          // Auto-create participant for new devices
+          val newParticipant = JsonObject()
+            .put("device_id", deviceId)
+            .put("name", "Device $deviceId")
+          eventBus.publish("upsertParticipant", newParticipant)
+          logger.info { "Auto-created participant for device: $deviceId" }
+          return@request
+        }
+
+        val participantId = participant.getString("participant_id")
+        val defaultRadius = participant.getInteger("red_zone_radius") ?: 300
+
+        // Get red zones for this participant (including global zones)
+        eventBus.request<JsonArray>("getRedZones", JsonObject().put("participant_id", participantId)) { zonesResult ->
+          if (zonesResult.succeeded()) {
+            val zones = zonesResult.result().body()
+            
+            for (i in 0 until zones.size()) {
+              val zone = zones.getJsonObject(i)
+              val zoneId = zone.getString("zone_id")
+              val zoneName = zone.getString("name")
+              val zoneLat = zone.getDouble("latitude")
+              val zoneLon = zone.getDouble("longitude")
+              val zoneRadius = zone.getInteger("radius") ?: defaultRadius
+
+              val distance = haversineDistance(latitude, longitude, zoneLat, zoneLon)
+
+              if (distance <= zoneRadius) {
+                // Check for recent alert to prevent duplicates (within 30 minutes)
+                eventBus.request<JsonObject>("checkRecentAlert", JsonObject()
+                  .put("participant_id", participantId)
+                  .put("zone_id", zoneId)
+                  .put("window_minutes", 30)
+                ) { recentResult ->
+                  if (recentResult.succeeded()) {
+                    val exists = recentResult.result().body().getBoolean("exists") ?: false
+                    
+                    if (!exists) {
+                      // Create new geofence alert
+                      val alertData = JsonObject()
+                        .put("participant_id", participantId)
+                        .put("zone_id", zoneId)
+                        .put("zone_name", zoneName)
+                        .put("latitude", latitude)
+                        .put("longitude", longitude)
+                        .put("distance", distance)
+
+                      eventBus.publish("insertGeofenceAlert", alertData)
+                      logger.warn { "GEOFENCE ALERT: Participant $participantId entered zone '$zoneName' (distance: ${String.format("%.1f", distance)}m)" }
+                    }
+                  }
+                }
+              }
+            }
+          } else {
+            logger.error(zonesResult.cause()) { "Failed to get red zones for participant $participantId" }
+          }
+        }
+      } else {
+        logger.debug { "Device $deviceId has no associated participant yet" }
+      }
+    }
   }
 }

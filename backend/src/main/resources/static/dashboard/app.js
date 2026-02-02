@@ -1,8 +1,3 @@
-/**
- * Digital Phenotyping IDS - Clinical Dashboard Application
- * Frontend JavaScript for UI interactions and data display
- */
-
 (function () {
     'use strict';
 
@@ -10,72 +5,16 @@
     const state = {
         currentView: 'dashboard',
         isAuthenticated: false,
-        lastSync: new Date()
+        lastSync: new Date(),
+        map: null,
+        markers: [],
+        refreshInterval: null,
+        alerts: [],
+        participants: []
     };
 
-    // Mock Data (to be replaced with real API calls)
-    const mockData = {
-        participants: [
-            { id: 'P001', name: 'Participant A', deviceId: 'demo-phone', status: 'active', lastActivity: '2 min ago', riskLevel: 'low' },
-            { id: 'P002', name: 'Participant B', deviceId: 'device-002', status: 'active', lastActivity: '15 min ago', riskLevel: 'moderate' },
-            { id: 'P003', name: 'Participant C', deviceId: 'device-003', status: 'inactive', lastActivity: '3 hours ago', riskLevel: 'high' },
-            { id: 'P004', name: 'Participant D', deviceId: 'device-004', status: 'active', lastActivity: '5 min ago', riskLevel: 'low' },
-            { id: 'P005', name: 'Participant E', deviceId: 'device-005', status: 'active', lastActivity: '1 hour ago', riskLevel: 'moderate' }
-        ],
-        devices: [
-            { deviceId: 'demo-phone', participant: 'Participant A', lastSeen: '2 min ago', battery: 85, sensorsActive: 6, status: 'online' },
-            { deviceId: 'device-002', participant: 'Participant B', lastSeen: '15 min ago', battery: 72, sensorsActive: 6, status: 'online' },
-            { deviceId: 'device-003', participant: 'Participant C', lastSeen: '3 hours ago', battery: 12, sensorsActive: 0, status: 'offline' },
-            { deviceId: 'device-004', participant: 'Participant D', lastSeen: '5 min ago', battery: 94, sensorsActive: 6, status: 'online' },
-            { deviceId: 'device-005', participant: 'Participant E', lastSeen: '1 hour ago', battery: 45, sensorsActive: 4, status: 'online' }
-        ],
-        alerts: [
-            {
-                id: 'A001',
-                type: 'critical',
-                title: 'Prolonged Inactivity Detected',
-                description: 'Participant C has shown no device activity for over 3 hours. Immediate follow-up recommended.',
-                participant: 'Participant C',
-                time: '10 min ago'
-            },
-            {
-                id: 'A002',
-                type: 'warning',
-                title: 'Elevated Risk Score',
-                description: 'Participant B risk score has increased to 68. Behavioral pattern changes detected.',
-                participant: 'Participant B',
-                time: '45 min ago'
-            },
-            {
-                id: 'A003',
-                type: 'warning',
-                title: 'Low Battery Warning',
-                description: 'Device for Participant C has critically low battery (12%). Data collection may be interrupted.',
-                participant: 'Participant C',
-                time: '1 hour ago'
-            },
-            {
-                id: 'A004',
-                type: 'info',
-                title: 'New Device Registered',
-                description: 'Device demo-phone has been successfully registered and is now collecting data.',
-                participant: 'Participant A',
-                time: '2 hours ago'
-            }
-        ],
-        users: [
-            { username: 'admin', role: 'Administrator', email: 'admin@clinic.org', lastLogin: 'Just now', status: 'active' },
-            { username: 'dr.smith', role: 'Clinician', email: 'smith@clinic.org', lastLogin: '2 hours ago', status: 'active' },
-            { username: 'nurse.jones', role: 'Staff', email: 'jones@clinic.org', lastLogin: '1 day ago', status: 'active' },
-            { username: 'researcher', role: 'Researcher', email: 'research@clinic.org', lastLogin: '3 days ago', status: 'inactive' }
-        ],
-        stats: {
-            participants: 5,
-            devices: 4,
-            alerts: 3,
-            datapoints: 12847
-        }
-    };
+    // API Configuration
+    const API_BASE = '/api';
 
     // DOM Elements
     const elements = {
@@ -116,11 +55,21 @@
         if (alertFilter) {
             alertFilter.addEventListener('change', filterAlerts);
         }
+
+        // Refresh buttons
+        const refreshMapBtn = document.getElementById('refresh-map-btn');
+        if (refreshMapBtn) {
+            refreshMapBtn.addEventListener('click', refreshMapData);
+        }
+
+        const refreshAlertsBtn = document.getElementById('refresh-alerts-btn');
+        if (refreshAlertsBtn) {
+            refreshAlertsBtn.addEventListener('click', loadAlertsList);
+        }
     }
 
     // Check Authentication State
     function checkAuthState() {
-        // For demo purposes, check session storage
         const isAuth = sessionStorage.getItem('dp_ids_auth');
         if (isAuth === 'true') {
             showDashboard();
@@ -147,6 +96,9 @@
     function handleLogout() {
         sessionStorage.removeItem('dp_ids_auth');
         sessionStorage.removeItem('dp_ids_user');
+        if (state.refreshInterval) {
+            clearInterval(state.refreshInterval);
+        }
         showLogin();
     }
 
@@ -170,6 +122,15 @@
         // Load initial data
         loadDashboardData();
         navigateTo('dashboard');
+
+        // Start auto-refresh every 30 seconds
+        state.refreshInterval = setInterval(() => {
+            if (state.currentView === 'dashboard') {
+                loadDashboardData();
+            } else if (state.currentView === 'alerts') {
+                loadAlertsList();
+            }
+        }, 30000);
     }
 
     // Navigate to View
@@ -208,26 +169,67 @@
         loadViewData(viewName);
     }
 
-    // Load Dashboard Data
-    function loadDashboardData() {
+    // ---- API FUNCTIONS ----
+
+    async function apiGet(endpoint) {
+        try {
+            const response = await fetch(`${API_BASE}${endpoint}`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return await response.json();
+        } catch (error) {
+            console.error(`API GET ${endpoint} failed:`, error);
+            return null;
+        }
+    }
+
+    async function apiPost(endpoint, data) {
+        try {
+            const response = await fetch(`${API_BASE}${endpoint}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return await response.json();
+        } catch (error) {
+            console.error(`API POST ${endpoint} failed:`, error);
+            return null;
+        }
+    }
+
+    // ---- DATA LOADING FUNCTIONS ----
+
+    async function loadDashboardData() {
+        // Load participants count
+        const participants = await apiGet('/participants');
+        const alerts = await apiGet('/alerts?active=true');
+
+        state.participants = participants || [];
+        state.alerts = alerts || [];
+
         // Update stats
-        document.getElementById('stat-participants').textContent = mockData.stats.participants;
-        document.getElementById('stat-devices').textContent = mockData.stats.devices;
-        document.getElementById('stat-alerts').textContent = mockData.stats.alerts;
-        document.getElementById('stat-datapoints').textContent = formatNumber(mockData.stats.datapoints);
+        document.getElementById('stat-participants').textContent = state.participants.length;
+        document.getElementById('stat-devices').textContent = state.participants.length;
+        document.getElementById('stat-alerts').textContent = state.alerts.length;
+
+        // Update alert badge in sidebar
+        const alertBadge = document.getElementById('alert-count');
+        if (alertBadge) {
+            alertBadge.textContent = state.alerts.length;
+        }
 
         // Update last sync time
+        state.lastSync = new Date();
         document.getElementById('last-sync').textContent = formatTime(state.lastSync);
 
         // Load recent alerts
         loadRecentAlerts();
     }
 
-    // Load View-Specific Data
     function loadViewData(viewName) {
         switch (viewName) {
             case 'participants':
-                loadParticipantsTable();
+                loadParticipantsView();
                 break;
             case 'alerts':
                 loadAlertsList();
@@ -241,97 +243,381 @@
         }
     }
 
-    // Load Recent Alerts Table
+    // ---- RECENT ALERTS (Dashboard) ----
+
     function loadRecentAlerts() {
         const tbody = document.getElementById('recent-alerts-table');
         if (!tbody) return;
 
-        const recentAlerts = mockData.alerts.slice(0, 4);
+        if (state.alerts.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#888;">No active alerts</td></tr>';
+            return;
+        }
+
+        const recentAlerts = state.alerts.slice(0, 5);
         tbody.innerHTML = recentAlerts.map(alert => `
             <tr>
-                <td>${alert.time}</td>
-                <td>${alert.participant}</td>
-                <td>${alert.title}</td>
-                <td><span class="risk-badge risk-${getSeverityClass(alert.type)}">${alert.type}</span></td>
+                <td>${formatTimestamp(alert.triggered_at)}</td>
+                <td>${alert.participant_name || alert.participant_id}</td>
+                <td>Entered: ${alert.zone_name || 'Red Zone'}</td>
+                <td><span class="risk-badge risk-high">geofence</span></td>
             </tr>
         `).join('');
     }
 
-    // Load Participants Table
-    function loadParticipantsTable() {
+    // ---- PARTICIPANTS VIEW ----
+
+    async function loadParticipantsView() {
+        await loadParticipantsTable();
+    }
+
+    async function loadParticipantsTable() {
         const tbody = document.getElementById('participants-table');
         if (!tbody) return;
 
-        tbody.innerHTML = mockData.participants.map(participant => `
-            <tr>
-                <td>${participant.id}</td>
-                <td>${participant.name}</td>
-                <td><code>${participant.deviceId}</code></td>
-                <td><span class="status-badge status-${participant.status}">${participant.status}</span></td>
-                <td>${participant.lastActivity}</td>
-                <td><span class="risk-badge risk-${participant.riskLevel}">${participant.riskLevel}</span></td>
+        const participants = await apiGet('/participants');
+        state.participants = participants || [];
+
+        if (state.participants.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:#888;">No participants registered. Devices will auto-register when sending data.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = state.participants.map(p => `
+            <tr id="row-${p.participant_id}">
+                <td>${p.participant_id.substring(0, 8)}...</td>
+                <td>${p.name}</td>
+                <td><code>${p.device_id}</code></td>
+                <td><span class="status-badge status-${p.status}">${p.status}</span></td>
+                <td><span class="risk-badge risk-${p.risk_level}">${p.risk_level}</span></td>
                 <td>
-                    <button class="btn btn-sm btn-secondary">View</button>
+                    <button class="btn btn-sm btn-info" id="loc-btn-${p.participant_id}" onclick="toggleLocationMap('${p.participant_id}', '${p.device_id}', '${p.name}')"><i style="margin-right: 5px;" class="fas fa-map-marker-alt"></i> Location</button>
+                    <button class="btn btn-sm btn-secondary" onclick="openParticipantModal('${p.participant_id}')"><i style="margin-right: 5px;" class="fas fa-cog"></i> Settings</button>
+                    <button class="btn btn-sm btn-primary" onclick="openZonesModal('${p.participant_id}')"><i style="margin-right: 5px;" class="fas fa-map-marked-alt"></i> Red Zones</button>
+                </td>
+            </tr>
+            <tr id="map-row-${p.participant_id}" class="map-row hidden">
+                <td colspan="7">
+                    <div class="participant-map-container">
+                        <div class="map-header">
+                            <span>Live Location: ${p.name}</span>
+                            <button class="btn btn-sm btn-secondary" onclick="refreshParticipantMap('${p.participant_id}', '${p.device_id}')"><i style="margin-right: 5px;" class="fas fa-sync-alt"></i> Refresh</button>
+                        </div>
+                        <div id="map-${p.participant_id}" class="participant-map"></div>
+                        <div id="map-info-${p.participant_id}" class="map-info"></div>
+                    </div>
                 </td>
             </tr>
         `).join('');
     }
 
-    // Load Alerts List
-    function loadAlertsList(filter = 'all') {
+    // ---- INDIVIDUAL PARTICIPANT MAP FUNCTIONALITY ----
+
+    // Store individual maps
+    state.participantMaps = {};
+
+    window.toggleLocationMap = async function (participantId, deviceId, name) {
+        const mapRow = document.getElementById(`map-row-${participantId}`);
+        const btn = document.getElementById(`loc-btn-${participantId}`);
+
+        if (mapRow.classList.contains('hidden')) {
+            // Show map
+            mapRow.classList.remove('hidden');
+            btn.innerHTML = '<i style="margin-right: 5px;" class="fas fa-eye-slash"></i> Hide';
+
+            // Initialize map if not already done
+            if (!state.participantMaps[participantId]) {
+                const mapContainer = document.getElementById(`map-${participantId}`);
+                const map = L.map(mapContainer).setView([25.2867, 51.5333], 12);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '© OpenStreetMap'
+                }).addTo(map);
+                state.participantMaps[participantId] = { map, marker: null };
+            }
+
+            // Load location data
+            await refreshParticipantMap(participantId, deviceId);
+        } else {
+            // Hide map
+            mapRow.classList.add('hidden');
+            btn.innerHTML = '<i class="fas fa-map-marker-alt"></i> Location';
+        }
+    };
+
+    window.refreshParticipantMap = async function (participantId, deviceId) {
+        const mapObj = state.participantMaps[participantId];
+        if (!mapObj) return;
+
+        const infoDiv = document.getElementById(`map-info-${participantId}`);
+        infoDiv.innerHTML = '<span style="color:#888;">Loading location...</span>';
+
+        const location = await apiGet(`/participants/${deviceId}/location`);
+
+        if (location && location.data) {
+            try {
+                const data = typeof location.data === 'string' ? JSON.parse(location.data) : location.data;
+                const lat = data.latitude;
+                const lon = data.longitude;
+
+                if (lat && lon) {
+                    // Remove old marker
+                    if (mapObj.marker) {
+                        mapObj.map.removeLayer(mapObj.marker);
+                    }
+
+                    // Add new marker
+                    mapObj.marker = L.marker([lat, lon]).addTo(mapObj.map);
+                    mapObj.map.setView([lat, lon], 15);
+
+                    // Update info - handle timestamp (could be in seconds or milliseconds)
+                    let timestamp = 'Unknown';
+                    if (location.timestamp) {
+                        // If timestamp is less than 10 billion, it's in seconds; otherwise milliseconds
+                        const ts = location.timestamp < 10000000000 ? location.timestamp * 1000 : location.timestamp;
+                        timestamp = new Date(ts).toLocaleString();
+                    }
+                    infoDiv.innerHTML = `
+                        <strong>Coordinates:</strong> ${lat.toFixed(6)}, ${lon.toFixed(6)} | 
+                        <strong>Accuracy:</strong> ${data.accuracy ? Math.round(data.accuracy) + 'm' : 'N/A'} | 
+                        <strong>Last Update:</strong> ${timestamp}
+                    `;
+                } else {
+                    infoDiv.innerHTML = '<span style="color:#c9302c;">No valid coordinates available</span>';
+                }
+            } catch (e) {
+                console.warn('Failed to parse location data:', e);
+                infoDiv.innerHTML = '<span style="color:#c9302c;">Error parsing location data</span>';
+            }
+        } else {
+            infoDiv.innerHTML = '<span style="color:#888;">No location data available for this participant</span>';
+        }
+
+        // Invalidate map size (needed when map is initially hidden)
+        setTimeout(() => mapObj.map.invalidateSize(), 100);
+    };
+
+    // ---- ALERTS VIEW ----
+
+    async function loadAlertsList(filter = 'all') {
         const container = document.getElementById('alerts-list');
         if (!container) return;
 
-        let alerts = mockData.alerts;
-        if (filter !== 'all') {
-            alerts = alerts.filter(a => a.type === filter);
+        const filterSelect = document.getElementById('alert-filter');
+        filter = filterSelect ? filterSelect.value : filter;
+
+        let endpoint = '/alerts';
+        if (filter === 'active') {
+            endpoint = '/alerts?active=true';
         }
 
-        container.innerHTML = alerts.map(alert => `
-            <div class="alert-item ${alert.type}">
-                <div class="alert-icon">${getAlertIcon(alert.type)}</div>
+        const alerts = await apiGet(endpoint);
+
+        if (!alerts || alerts.length === 0) {
+            container.innerHTML = '<div class="alert-item info"><div class="alert-content"><div class="alert-title">No Alerts</div><div class="alert-description">No geofence alerts have been triggered.</div></div></div>';
+            return;
+        }
+
+        // Filter locally for acknowledged
+        let filteredAlerts = alerts;
+        if (filter === 'acknowledged') {
+            filteredAlerts = alerts.filter(a => a.acknowledged);
+        } else if (filter === 'active') {
+            filteredAlerts = alerts.filter(a => !a.acknowledged);
+        }
+
+        container.innerHTML = filteredAlerts.map(alert => `
+            <div class="alert-item ${alert.acknowledged ? 'info' : 'critical'}">
+                <div class="alert-icon">${alert.acknowledged ? '<i class="fas fa-check"></i>' : '<i class="fas fa-exclamation"></i>'}</div>
                 <div class="alert-content">
-                    <div class="alert-title">${alert.title}</div>
-                    <div class="alert-description">${alert.description}</div>
-                    <div class="alert-meta">${alert.participant} | ${alert.time}</div>
+                    <div class="alert-title">Geofence Breach: ${alert.zone_name || 'Red Zone'}</div>
+                    <div class="alert-description">
+                        Participant ${alert.participant_name || alert.participant_id} entered a red zone.
+                        Distance from center: ${Math.round(alert.distance)}m
+                    </div>
+                    <div class="alert-meta">
+                        ${formatTimestamp(alert.triggered_at)}
+                        ${alert.acknowledged ? `| Acknowledged by ${alert.acknowledged_by}` : ''}
+                    </div>
                 </div>
                 <div class="alert-actions">
-                    <button class="btn btn-sm btn-secondary">Acknowledge</button>
-                    <button class="btn btn-sm btn-primary">View Details</button>
+                    ${!alert.acknowledged ? `
+                        <button class="btn btn-sm btn-primary" onclick="acknowledgeAlert('${alert.alert_id}')"><i style="margin-right: 5px;" class="fas fa-check"></i> Acknowledge</button>
+                    ` : ''}
                 </div>
             </div>
         `).join('');
     }
 
-    // Filter Alerts
     function filterAlerts() {
-        const filter = document.getElementById('alert-filter').value;
-        loadAlertsList(filter);
+        loadAlertsList();
     }
 
-    // Load Devices Table
-    function loadDevicesTable() {
-        const tbody = document.getElementById('devices-table');
+    // Global function for acknowledge button
+    window.acknowledgeAlert = async function (alertId) {
+        const username = sessionStorage.getItem('dp_ids_user') || 'admin';
+        const result = await apiPost(`/alerts/${alertId}/acknowledge?by=${username}`, {});
+        if (result && result.ok) {
+            loadAlertsList();
+            loadDashboardData(); // Refresh dashboard stats too
+        }
+    };
+
+    // ---- PARTICIPANT MODAL FUNCTIONS ----
+
+    window.openParticipantModal = function (participantId) {
+        const participant = state.participants.find(p => p.participant_id === participantId);
+        if (!participant) return;
+
+        document.getElementById('modal-participant-id').value = participant.participant_id;
+        document.getElementById('modal-participant-name').value = participant.name;
+        document.getElementById('modal-device-id').value = participant.device_id;
+        document.getElementById('modal-red-zone-radius').value = participant.red_zone_radius || 300;
+        document.getElementById('modal-risk-level').value = participant.risk_level || 'low';
+        document.getElementById('modal-status').value = participant.status || 'active';
+
+        document.getElementById('participant-modal').classList.remove('hidden');
+    };
+
+    window.closeParticipantModal = function () {
+        document.getElementById('participant-modal').classList.add('hidden');
+    };
+
+    window.saveParticipant = async function () {
+        const participantId = document.getElementById('modal-participant-id').value;
+        const data = {
+            participant_id: participantId,
+            device_id: document.getElementById('modal-device-id').value,
+            name: document.getElementById('modal-participant-name').value,
+            red_zone_radius: parseInt(document.getElementById('modal-red-zone-radius').value),
+            risk_level: document.getElementById('modal-risk-level').value,
+            status: document.getElementById('modal-status').value
+        };
+
+        const result = await apiPost('/participants', data);
+        if (result) {
+            closeParticipantModal();
+            await loadParticipantsTable();
+        }
+    };
+
+    // ---- RED ZONES MODAL FUNCTIONS ----
+
+    window.openZonesModal = async function (participantId) {
+        const participant = state.participants.find(p => p.participant_id === participantId);
+        if (!participant) return;
+
+        document.getElementById('zones-participant-id').value = participantId;
+        document.getElementById('zones-participant-info').textContent = `Managing red zones for: ${participant.name}`;
+
+        await loadZonesTable(participantId);
+
+        document.getElementById('zones-modal').classList.remove('hidden');
+    };
+
+    window.closeZonesModal = function () {
+        document.getElementById('zones-modal').classList.add('hidden');
+    };
+
+    async function loadZonesTable(participantId) {
+        const tbody = document.getElementById('zones-table');
         if (!tbody) return;
 
-        tbody.innerHTML = mockData.devices.map(device => `
+        const zones = await apiGet(`/zones?participant_id=${participantId}`);
+
+        if (!zones || zones.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#888;">No red zones configured. Add one above.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = zones.map(zone => `
             <tr>
-                <td><code>${device.deviceId}</code></td>
-                <td>${device.participant}</td>
-                <td>${device.lastSeen}</td>
-                <td>${device.battery}%</td>
-                <td>${device.sensorsActive}</td>
-                <td><span class="status-badge status-${device.status === 'online' ? 'active' : 'inactive'}">${device.status}</span></td>
+                <td>${zone.name}</td>
+                <td>${zone.latitude.toFixed(6)}, ${zone.longitude.toFixed(6)}</td>
+                <td>${zone.radius}m</td>
+                <td><span class="risk-badge risk-${zone.zone_type === 'bar' || zone.zone_type === 'dealer' ? 'high' : 'moderate'}">${zone.zone_type}</span></td>
+                <td>
+                    <button class="btn btn-sm btn-danger" onclick="deleteRedZone('${zone.zone_id}')"><i style="margin-right: 5px;" class="fas fa-trash"></i> Delete</button>
+                </td>
             </tr>
         `).join('');
     }
 
-    // Load Users Table
+    window.addRedZone = async function () {
+        const participantId = document.getElementById('zones-participant-id').value;
+        const data = {
+            participant_id: participantId,
+            name: document.getElementById('new-zone-name').value,
+            latitude: parseFloat(document.getElementById('new-zone-lat').value),
+            longitude: parseFloat(document.getElementById('new-zone-lon').value),
+            radius: parseInt(document.getElementById('new-zone-radius').value),
+            zone_type: document.getElementById('new-zone-type').value
+        };
+
+        if (!data.name || !data.latitude || !data.longitude) {
+            alert('Please fill in zone name, latitude, and longitude.');
+            return;
+        }
+
+        const result = await apiPost('/zones', data);
+        if (result) {
+            // Clear form
+            document.getElementById('new-zone-name').value = '';
+            document.getElementById('new-zone-lat').value = '';
+            document.getElementById('new-zone-lon').value = '';
+            document.getElementById('new-zone-radius').value = '300';
+            document.getElementById('new-zone-type').value = 'custom';
+
+            await loadZonesTable(participantId);
+        }
+    };
+
+    window.deleteRedZone = async function (zoneId) {
+        if (!confirm('Are you sure you want to delete this red zone?')) return;
+
+        const participantId = document.getElementById('zones-participant-id').value;
+        const result = await fetch(`${API_BASE}/zones/${zoneId}`, { method: 'DELETE' });
+
+        if (result.ok) {
+            await loadZonesTable(participantId);
+        }
+    };
+
+    // ---- DEVICES TABLE ----
+
+    async function loadDevicesTable() {
+        const tbody = document.getElementById('devices-table');
+        if (!tbody) return;
+
+        const participants = await apiGet('/participants') || [];
+
+        if (participants.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:#888;">No devices registered</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = participants.map(p => `
+            <tr>
+                <td><code>${p.device_id}</code></td>
+                <td>${p.name}</td>
+                <td>${formatTimestamp(p.updated_at) || 'Unknown'}</td>
+                <td>--</td>
+                <td>6</td>
+                <td><span class="status-badge status-${p.status === 'active' ? 'active' : 'inactive'}">${p.status}</span></td>
+            </tr>
+        `).join('');
+    }
+
+    // ---- USERS TABLE ----
+
     function loadUsersTable() {
         const tbody = document.getElementById('users-table');
         if (!tbody) return;
 
-        tbody.innerHTML = mockData.users.map(user => `
+        const users = [
+            { username: 'admin', role: 'Administrator', email: 'admin@clinic.org', lastLogin: 'Just now', status: 'active' }
+        ];
+
+        tbody.innerHTML = users.map(user => `
             <tr>
                 <td>${user.username}</td>
                 <td>${user.role}</td>
@@ -345,7 +631,8 @@
         `).join('');
     }
 
-    // Utility Functions
+    // ---- UTILITY FUNCTIONS ----
+
     function formatNumber(num) {
         return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
     }
@@ -357,22 +644,15 @@
         });
     }
 
-    function getSeverityClass(type) {
-        const map = {
-            critical: 'high',
-            warning: 'moderate',
-            info: 'low'
-        };
-        return map[type] || 'low';
-    }
-
-    function getAlertIcon(type) {
-        const icons = {
-            critical: '!',
-            warning: '!',
-            info: 'i'
-        };
-        return icons[type] || '!';
+    function formatTimestamp(timestamp) {
+        if (!timestamp) return 'Unknown';
+        const date = new Date(timestamp);
+        return date.toLocaleString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
     }
 
     // Initialize when DOM is ready

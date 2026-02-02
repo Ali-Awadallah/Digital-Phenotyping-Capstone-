@@ -1,17 +1,12 @@
-/* 
- * Digital Phenotyping IDS - Clinical Dashboard Styles
- * Professional, clinical-grade design for healthcare environments
- */
-
 /* CSS Variables */
 :root {
-    --color-primary: #1a2332;
+    --color-primary: #222d3aff;
     --color-primary-light: #2a3548;
     --color-primary-dark: #0f1621;
     --color-accent: #3d5a80;
     --color-background: #f5f6f8;
     --color-surface: #ffffff;
-    --color-text-primary: #1a2332;
+    --color-text-primary: #222d3aff;
     --color-text-secondary: #5a6474;
     --color-text-muted: #8a94a6;
     --color-border: #e1e4e8;
@@ -29,13 +24,16 @@
 }
 
 /* Reset & Base */
-*, *::before, *::after {
+*,
+*::before,
+*::after {
     box-sizing: border-box;
     margin: 0;
     padding: 0;
 }
 
-html, body {
+html,
+body {
     height: 100%;
     font-family: var(--font-family);
     font-size: 14px;
@@ -421,6 +419,9 @@ table {
 .card-header {
     padding: 16px 20px;
     border-bottom: 1px solid var(--color-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
 }
 
 .card-header h3 {
@@ -623,7 +624,7 @@ table {
     .stats-grid {
         grid-template-columns: repeat(2, 1fr);
     }
-    
+
     .content-grid,
     .settings-grid {
         grid-template-columns: 1fr;
@@ -634,36 +635,168 @@ table {
     .sidebar {
         width: 60px;
     }
-    
+
     .sidebar-header h2,
     .sidebar-subtitle,
     .nav-item span:not(.nav-icon),
     .sidebar-footer {
         display: none;
     }
-    
+
     .nav-item {
         justify-content: center;
         padding: 16px;
     }
-    
+
     .nav-icon {
         margin-right: 0;
     }
-    
+
     .main-content {
         margin-left: 60px;
     }
-    
+
     .stats-grid {
         grid-template-columns: 1fr;
     }
-    
+
     .view {
         padding: 16px;
     }
-    
+
     .content-header {
         padding: 0 16px;
     }
+}
+
+/* Modal Styles */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-backdrop {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+}
+
+.modal-content {
+    position: relative;
+    width: 100%;
+    max-width: 500px;
+    max-height: 90vh;
+    overflow-y: auto;
+    background-color: var(--color-surface);
+    border-radius: var(--border-radius);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+}
+
+.modal-content.modal-large {
+    max-width: 800px;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.modal-header h3 {
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    font-size: 24px;
+    color: var(--color-text-muted);
+    cursor: pointer;
+}
+
+.modal-close:hover {
+    color: var(--color-text-primary);
+}
+
+.modal-body {
+    padding: 24px;
+}
+
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 16px 24px;
+    border-top: 1px solid var(--color-border);
+}
+
+.btn-danger {
+    background-color: var(--color-danger);
+    color: white;
+}
+
+.btn-danger:hover {
+    background-color: #a82824;
+}
+
+/* Info Button Style */
+.btn-info {
+    background-color: #17a2b8;
+    color: white;
+}
+
+.btn-info:hover {
+    background-color: #138496;
+}
+
+/* Individual Participant Map Styles */
+.map-row {
+    background-color: #f8f9fa;
+}
+
+.map-row.hidden {
+    display: none;
+}
+
+.participant-map-container {
+    padding: 16px;
+    border-radius: var(--border-radius);
+    background-color: #fff;
+    border: 1px solid var(--color-border);
+}
+
+.map-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    font-weight: 600;
+}
+
+.participant-map {
+    height: 250px;
+    border-radius: var(--border-radius);
+    border: 1px solid var(--color-border);
+}
+
+.map-info {
+    margin-top: 12px;
+    padding: 10px 12px;
+    background-color: var(--color-background);
+    border-radius: var(--border-radius);
+    font-size: 13px;
+    color: var(--color-text-secondary);
 }
