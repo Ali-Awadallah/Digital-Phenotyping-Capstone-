@@ -1,0 +1,50 @@
+services:
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    container_name: dp-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: aware_db
+      MYSQL_USER: aware_user
+      MYSQL_PASSWORD: password
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dp-network
+
+  # Digital Phenotyping Backend
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dp-backend
+    ports:
+      - "8090:8080"
+      - "8091:8081"
+    environment:
+      # Override database host to use Docker network
+      DATABASE_HOST: mysql
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      # Mount config for easy updates (optional)
+      - ./aware-config-docker.json:/app/aware-config.json:ro
+    networks:
+      - dp-network
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+
+networks:
+  dp-network:
+    driver: bridge

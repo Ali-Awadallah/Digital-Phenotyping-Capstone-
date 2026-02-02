@@ -1,0 +1,28 @@
+{
+  "server" : {
+    "database_engine" : "mysql",
+    "database_host" : "mysql",
+    "database_name" : "aware_db",
+    "database_user" : "aware_user",
+    "database_pwd" : "password",
+    "database_port" : 3306,
+    "server_host" : "http://localhost",
+    "server_port" : 8080,
+    "websocket_port" : 8081,
+    "path_fullchain_pem" : "",
+    "path_key_pem" : ""
+  },
+  "study" : {
+    "study_key" : "4lph4num3ric",
+    "study_number" : 1,
+    "study_name" : "AWARE Micro demo study",
+    "study_active" : true,
+    "study_start" : 1762199697606,
+    "study_description" : "This is a demo study to test AWARE Micro",
+    "researcher_first" : "First Name",
+    "researcher_last" : "Last Name",
+    "researcher_contact" : "your@email.com"
+  },
+  "sensors" : [],
+  "plugins" : []
+}
