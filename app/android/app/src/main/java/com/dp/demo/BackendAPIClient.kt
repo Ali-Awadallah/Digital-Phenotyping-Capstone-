@@ -165,6 +165,82 @@ object BackendAPIClient {
     }
     
     /**
+     * Send battery data to backend
+     */
+    fun sendBattery(
+        context: Context,
+        ts: Long,
+        percentage: Int,
+        chargingStatus: String
+    ) {
+        val deviceId = getDeviceId(context)
+        val apiBase = getApiBase(context)
+        
+        val json = JSONObject().apply {
+            put("device_id", deviceId)
+            put("ts", ts)
+            put("percentage", percentage)
+            put("charging_status", chargingStatus)
+        }
+        
+        sendRequest("$apiBase/battery", json)
+    }
+    
+    /**
+     * Send screen event to backend
+     */
+    fun sendScreenEvent(
+        context: Context,
+        ts: Long,
+        state: String
+    ) {
+        val deviceId = getDeviceId(context)
+        val apiBase = getApiBase(context)
+        
+        val json = JSONObject().apply {
+            put("device_id", deviceId)
+            put("ts", ts)
+            put("state", state)
+        }
+        
+        sendRequest("$apiBase/screen", json)
+    }
+    
+    /**
+     * Send notification to backend
+     * @param kind "posted" or "removed"
+     * @param dismissedAt timestamp when notification was dismissed (only for removed notifications)
+     */
+    fun sendNotification(
+        context: Context,
+        ts: Long,
+        appName: String,
+        title: String,
+        content: String,
+        category: String,
+        kind: String,
+        dismissedAt: Long? = null
+    ) {
+        val deviceId = getDeviceId(context)
+        val apiBase = getApiBase(context)
+        
+        val json = JSONObject().apply {
+            put("device_id", deviceId)
+            put("ts", ts)
+            put("app_name", appName)
+            put("title", title)
+            put("content", content)
+            put("category", category)
+            put("kind", kind)
+            if (dismissedAt != null) {
+                put("dismissed_at", dismissedAt)
+            }
+        }
+        
+        sendRequest("$apiBase/notification", json)
+    }
+    
+    /**
      * Internal method to send HTTP POST request asynchronously
      */
     private fun sendRequest(url: String, json: JSONObject) {

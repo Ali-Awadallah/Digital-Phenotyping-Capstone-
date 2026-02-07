@@ -31,14 +31,31 @@ export async function getEvents(device_id) {
   return res.json(); // returns an array of events
 }
 
-export async function sendBatteryReading(deviceId, percentage) {
+export async function sendBatteryReading(deviceId, percentage, chargingStatus = "unknown") {
   const res = await fetch(`${API_BASE}/battery`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       device_id: deviceId,
       percentage,
+      charging_status: chargingStatus, // "charging", "unplugged", "full", or "unknown"
       ts: Date.now(),
+    }),
+  });
+  return res.json();
+}
+
+export async function sendNotification(deviceId, appName, title, content, category, timestamp) {
+  const res = await fetch(`${API_BASE}/notification`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      device_id: deviceId,
+      app_name: appName,
+      title: title,
+      content: content,
+      category: category,
+      ts: timestamp || Date.now(),
     }),
   });
   return res.json();

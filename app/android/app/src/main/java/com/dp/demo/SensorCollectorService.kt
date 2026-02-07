@@ -8,6 +8,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.hardware.Sensor
@@ -17,6 +18,7 @@ import android.hardware.SensorManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -53,6 +55,10 @@ class SensorCollectorService : Service(), SensorEventListener {
         private const val ACCEL_LOG = "accelerometer-events.log"
         private const val GYRO_LOG = "gyroscope-events.log"
         private const val STEPS_LOG = "pedometer-events.log"
+        private const val BATTERY_LOG = "battery-events.log"
+        
+        // Battery polling every 5 minutes (60 batch cycles of 5 seconds)
+        private const val BATTERY_POLL_COUNT = 60
         
         const val PREF_SERVICE_ENABLED = "background_service_enabled"
         const val PREF_AUTO_START_ON_BOOT = "auto_start_on_boot"
@@ -74,6 +80,7 @@ class SensorCollectorService : Service(), SensorEventListener {
     private var initialStepCount: Int = -1
     
     private var isRunning = false
+    private var batteryPollCounter = 0
     
     data class SensorReading(
         val ts: Long,
@@ -389,6 +396,13 @@ class SensorCollectorService : Service(), SensorEventListener {
                     try {
                         flushAccelBatch()
                         flushGyroBatch()
+                        
+                        // Poll battery every 5 minutes (60 * 5 seconds)
+                        batteryPollCounter++
+                        if (batteryPollCounter >= BATTERY_POLL_COUNT) {
+                            batteryPollCounter = 0
+                            pollBattery()
+                        }
                     } catch (e: Exception) {
                         Log.e(TAG, "Error in batch flush", e)
                     }
@@ -570,6 +584,44 @@ class SensorCollectorService : Service(), SensorEventListener {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error logging steps", e)
+        }
+    }
+
+    private fun pollBattery() {
+        try {
+            val batteryStatus = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            val level = batteryStatus?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+            val scale = batteryStatus?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
+            val percentage = if (scale > 0) (level * 100) / scale else level
+            
+            val status = batteryStatus?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+            val chargingStatus = when (status) {
+                BatteryManager.BATTERY_STATUS_CHARGING -> "charging"
+                BatteryManager.BATTERY_STATUS_FULL -> "full"
+                BatteryManager.BATTERY_STATUS_DISCHARGING, 
+                BatteryManager.BATTERY_STATUS_NOT_CHARGING -> "unplugged"
+                else -> "unknown"
+            }
+            
+            val ts = System.currentTimeMillis()
+            
+            // Log to local file
+            val obj = JSONObject().apply {
+                put("ts", ts)
+                put("percentage", percentage)
+                put("charging_status", chargingStatus)
+            }
+            appendToLog(BATTERY_LOG, obj)
+            Log.d(TAG, "Battery logged: $percentage% ($chargingStatus)")
+            
+            // Send to backend API
+            try {
+                BackendAPIClient.sendBattery(this, ts, percentage, chargingStatus)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error sending battery to backend", e)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error polling battery", e)
         }
     }
 

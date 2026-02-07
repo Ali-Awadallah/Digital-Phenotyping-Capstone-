@@ -12,15 +12,16 @@ class NotificationLoggerService : NotificationListenerService() {
 
   override fun onNotificationPosted(sbn: StatusBarNotification?) {
     if (sbn == null) return
-    logEvent("posted", sbn)
+    logEvent("posted", sbn, null)
   }
 
   override fun onNotificationRemoved(sbn: StatusBarNotification?) {
     if (sbn == null) return
-    logEvent("removed", sbn)
+    // When notification is removed/dismissed, record the dismissed timestamp
+    logEvent("removed", sbn, System.currentTimeMillis())
   }
 
-  private fun logEvent(kind: String, sbn: StatusBarNotification) {
+  private fun logEvent(kind: String, sbn: StatusBarNotification, dismissedAt: Long?) {
     try {
       // Respect JS-side toggle: if sentinel file exists, skip logging entirely
       val dir: File = applicationContext.filesDir
@@ -62,11 +63,30 @@ class NotificationLoggerService : NotificationListenerService() {
       obj.put("category", category)
       obj.put("title", safeTitle)
       obj.put("text", safeText)
+      if (dismissedAt != null) {
+        obj.put("dismissed_at", dismissedAt)
+      }
 
       val log = File(dir, "notification-events.log")
       FileWriter(log, true).use { w ->
         w.write(obj.toString())
         w.write("\n")
+      }
+
+      // Send to backend API
+      try {
+        BackendAPIClient.sendNotification(
+          applicationContext,
+          ts,
+          appName,
+          safeTitle,
+          safeText,
+          category,
+          kind,
+          dismissedAt
+        )
+      } catch (_: Exception) {
+        // ignore backend errors to avoid impacting notifications
       }
     } catch (_: Exception) {
       // ignore all logging errors to avoid impacting notifications
