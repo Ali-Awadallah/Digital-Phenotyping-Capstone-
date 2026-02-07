@@ -158,20 +158,37 @@ class MainVerticle : AbstractVerticle() {
           }
         }
 
-        // POST /api/battery  -> receive real battery reading from app, log it, echo back
+        // POST /api/battery  -> receive real battery reading from app, store in DB
         api.post("/battery").handler { ctx ->
           try {
             val body = ctx.bodyAsJson
 
             val deviceId = body.getString("device_id") ?: "unknown"
             val percentage = body.getDouble("percentage")
+            val chargingStatus = body.getString("charging_status", "unknown")
             val ts = body.getLong("ts")
 
-            logger.info { "Battery reading from $deviceId: $percentage% at $ts" }
+            logger.info { "Battery reading from $deviceId: $percentage% ($chargingStatus) at $ts" }
 
-            ctx.response()
-              .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-              .end(body.encode())
+            // Store battery reading in database
+            val batteryData = JsonObject()
+              .put("device_id", deviceId)
+              .put("percentage", percentage)
+              .put("charging_status", chargingStatus)
+              .put("timestamp", ts)
+            
+            vertx.eventBus().request<JsonObject>("insertBatteryReading", batteryData) { ar ->
+              if (ar.succeeded()) {
+                ctx.response()
+                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode())
+              } else {
+                logger.error(ar.cause()) { "Failed to store battery reading" }
+                ctx.response()
+                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode()) // Still return OK to app
+              }
+            }
           } catch (e: Exception) {
             logger.error(e) { "Error handling /api/battery" }
             ctx.response()
@@ -180,7 +197,7 @@ class MainVerticle : AbstractVerticle() {
           }
         }
 
-        // POST /api/screen  -> receive real screen state from app, log it, echo back
+        // POST /api/screen  -> receive real screen state from app, store in DB
         api.post("/screen").handler { ctx ->
           try {
             val body = ctx.bodyAsJson
@@ -191,11 +208,73 @@ class MainVerticle : AbstractVerticle() {
 
             logger.info { "Screen state from $deviceId: $state at $ts" }
 
-            ctx.response()
-              .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-              .end(body.encode())
+            // Store screen event in database
+            val screenData = JsonObject()
+              .put("device_id", deviceId)
+              .put("state", state)
+              .put("timestamp", ts)
+            
+            vertx.eventBus().request<JsonObject>("insertScreenEvent", screenData) { ar ->
+              if (ar.succeeded()) {
+                ctx.response()
+                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode())
+              } else {
+                logger.error(ar.cause()) { "Failed to store screen event" }
+                ctx.response()
+                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode()) // Still return OK to app
+              }
+            }
           } catch (e: Exception) {
             logger.error(e) { "Error handling /api/screen" }
+            ctx.response()
+              .setStatusCode(400)
+              .end(JsonObject().put("error", e.message).encode())
+          }
+        }
+
+        // POST /api/notification  -> receive notification from app, store in DB
+        api.post("/notification").handler { ctx ->
+          try {
+            val body = ctx.bodyAsJson
+
+            val deviceId = body.getString("device_id") ?: "unknown"
+            val appName = body.getString("app_name", "")
+            val title = body.getString("title", "")
+            val content = body.getString("content", "")
+            val category = body.getString("category", "")
+            val kind = body.getString("kind", "posted")
+            val ts = body.getLong("ts")
+            val dismissedAt = body.getLong("dismissed_at", 0L)
+
+            logger.info { "Notification from $deviceId: $appName - $title ($kind) at $ts" }
+
+            // Store notification in database
+            val notificationData = JsonObject()
+              .put("device_id", deviceId)
+              .put("app_name", appName)
+              .put("title", title)
+              .put("content", content)
+              .put("category", category)
+              .put("kind", kind)
+              .put("timestamp", ts)
+              .put("dismissed_at", dismissedAt)
+            
+            vertx.eventBus().request<JsonObject>("insertNotification", notificationData) { ar ->
+              if (ar.succeeded()) {
+                ctx.response()
+                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode())
+              } else {
+                logger.error(ar.cause()) { "Failed to store notification" }
+                ctx.response()
+                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode()) // Still return OK to app
+              }
+            }
+          } catch (e: Exception) {
+            logger.error(e) { "Error handling /api/notification" }
             ctx.response()
               .setStatusCode(400)
               .end(JsonObject().put("error", e.message).encode())

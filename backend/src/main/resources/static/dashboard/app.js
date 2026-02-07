@@ -10,7 +10,8 @@
         markers: [],
         refreshInterval: null,
         alerts: [],
-        participants: []
+        participants: [],
+        socket: null
     };
 
     // API Configuration
@@ -122,6 +123,11 @@
         // Load initial data
         loadDashboardData();
         navigateTo('dashboard');
+
+        // Initialize WebSocket for real-time updates
+        if (!state.socket) {
+            initWebSocket();
+        }
 
         // Start auto-refresh every 30 seconds
         state.refreshInterval = setInterval(() => {
@@ -595,16 +601,75 @@
             return;
         }
 
-        tbody.innerHTML = participants.map(p => `
-            <tr>
-                <td><code>${p.device_id}</code></td>
-                <td>${p.name}</td>
-                <td>${formatTimestamp(p.updated_at) || 'Unknown'}</td>
-                <td>--</td>
-                <td>6</td>
-                <td><span class="status-badge status-${p.status === 'active' ? 'active' : 'inactive'}">${p.status}</span></td>
-            </tr>
-        `).join('');
+        tbody.innerHTML = participants.map(p => {
+            const batteryStr = p.percentage !== null && p.percentage !== undefined
+                ? `${Math.round(p.percentage)}% (${p.charging_status || 'unknown'})`
+                : '--';
+
+            return `
+                <tr>
+                    <td><code>${p.device_id}</code></td>
+                    <td>${p.name}</td>
+                    <td>${formatTimestamp(p.updated_at) || 'Unknown'}</td>
+                    <td id="battery-${p.device_id}">${batteryStr}</td>
+                    <td>8</td>
+                    <td><span class="status-badge status-${p.status === 'active' ? 'active' : 'inactive'}">${p.status}</span></td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    function initWebSocket() {
+        const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${location.hostname}:8081`;
+
+        console.log('Connecting to WebSocket at', wsUrl);
+        state.socket = new WebSocket(wsUrl);
+
+        state.socket.onopen = () => {
+            console.log('Connected to WebSocket server');
+            const indicator = document.querySelector('.status-indicator');
+            if (indicator) {
+                indicator.style.backgroundColor = '#2ecc71'; // Green
+            }
+        };
+
+        state.socket.onmessage = (event) => {
+            try {
+                const message = JSON.parse(event.data);
+                if (message.type === 'battery_update') {
+                    updateBatteryUI(message.data);
+                }
+            } catch (e) {
+                console.error('Error parsing WebSocket message:', e);
+            }
+        };
+
+        state.socket.onclose = () => {
+            console.log('WebSocket connection closed, retrying in 5 seconds...');
+            state.socket = null;
+            setTimeout(initWebSocket, 5000);
+        };
+
+        state.socket.onerror = (error) => {
+            console.error('WebSocket error:', error);
+        };
+    }
+
+    function updateBatteryUI(data) {
+        const el = document.getElementById(`battery-${data.device_id}`);
+        if (el) {
+            const batteryStr = `${Math.round(data.percentage)}% (${data.charging_status || 'unknown'})`;
+            el.textContent = batteryStr;
+
+            // Brief highlight effect
+            el.style.color = '#3498db';
+            el.style.fontWeight = 'bold';
+            setTimeout(() => {
+                el.style.color = '';
+                el.style.fontWeight = '';
+            }, 3000);
+        }
     }
 
     // ---- USERS TABLE ----

@@ -15,7 +15,7 @@ class WebsocketVerticle : AbstractVerticle() {
   private val logger = KotlinLogging.logger {}
 
   private lateinit var parameters: JsonObject
-  private lateinit var websocket : ServerWebSocket
+  private val clients = mutableSetOf<ServerWebSocket>()
 
   override fun start(startPromise: Promise<Void>?) {
     super.start(startPromise)
@@ -36,22 +36,32 @@ class WebsocketVerticle : AbstractVerticle() {
 
         val serverConfig = parameters.getJsonObject("server")
 
-        // https://access.redhat.com/documentation/ja-jp/red_hat_build_of_eclipse_vert.x/4.0/html/eclipse_vert.x_4.0_migration_guide/changes-in-http_changes-in-common-components#updates_in_http_methods_for_literal_websocket_literal
+        // Listen for battery updates from event bus
+        vertx.eventBus().consumer<JsonObject>("battery.update") { message ->
+          val update = message.body()
+          broadcast(JsonObject().put("type", "battery_update").put("data", update))
+        }
+
         vertx.createHttpServer()
           .webSocketHandler { server ->
-            server.handler {
-              logger.info { "Websocket connected" }
-            }
+            logger.info { "Websocket connected" }
+            clients.add(server)
 
             server.closeHandler {
               logger.info { "Websocket connection closed" }
+              clients.remove(server)
+            }
+
+            server.exceptionHandler { e ->
+              logger.error(e) { "Websocket error" }
+              clients.remove(server)
             }
 
             server.textMessageHandler { message ->
-              websocket.writeTextMessage(message)
+              // Optional: handle incoming messages if needed
+              // For now just echo or ignore
+              // server.writeTextMessage("Echo: $message")
             }
-
-            websocket = server
           }
           .listen(getExternalWebSocketServerPort(serverConfig)) {
             if (it.failed()) {
@@ -60,6 +70,17 @@ class WebsocketVerticle : AbstractVerticle() {
               logger.info { "AWARE Micro Websocket server: ws://${getExternalWebSocketServerHost(serverConfig)}:${getExternalWebSocketServerPort(serverConfig)}" }
             }
           }
+      }
+    }
+  }
+
+  private fun broadcast(message: JsonObject) {
+    val text = message.encode()
+    clients.forEach { socket ->
+      try {
+        socket.writeTextMessage(text)
+      } catch (e: Exception) {
+        logger.error(e) { "Failed to send websocket message" }
       }
     }
   }

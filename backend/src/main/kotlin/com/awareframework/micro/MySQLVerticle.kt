@@ -109,6 +109,13 @@ class MySQLVerticle : AbstractVerticle() {
         createRedZonesTable()
         createGeofenceAlertsTable()
 
+        // ---- SENSOR DATA TABLES ----
+        
+        // Create sensor data tables on startup
+        createBatteryReadingsTable()
+        createScreenEventsTable()
+        createNotificationsTable()
+
         // Get all participants
         eventBus.consumer<JsonObject>("getParticipants") { receivedMessage ->
           getAllParticipants().onComplete { response ->
@@ -239,6 +246,56 @@ class MySQLVerticle : AbstractVerticle() {
               receivedMessage.reply(response.result())
             } else {
               receivedMessage.fail(500, response.cause().message ?: "Failed to get location")
+            }
+          }
+        }
+
+        // ---- SENSOR DATA EVENT HANDLERS ----
+
+        // Insert battery reading
+        eventBus.consumer<JsonObject>("insertBatteryReading") { receivedMessage ->
+          val data = receivedMessage.body()
+          insertBatteryReading(data).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(JsonObject().put("ok", true))
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to insert battery reading")
+            }
+          }
+        }
+
+        // Insert screen event
+        eventBus.consumer<JsonObject>("insertScreenEvent") { receivedMessage ->
+          val data = receivedMessage.body()
+          insertScreenEvent(data).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(JsonObject().put("ok", true))
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to insert screen event")
+            }
+          }
+        }
+
+        // Insert notification
+        eventBus.consumer<JsonObject>("insertNotification") { receivedMessage ->
+          val data = receivedMessage.body()
+          insertNotification(data).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(JsonObject().put("ok", true))
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to insert notification")
+            }
+          }
+        }
+
+        // Get latest battery for device
+        eventBus.consumer<JsonObject>("getLatestBattery") { receivedMessage ->
+          val deviceId = receivedMessage.body().getString("device_id")
+          getLatestBattery(deviceId).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(response.result())
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to get battery")
             }
           }
         }
@@ -520,6 +577,260 @@ class MySQLVerticle : AbstractVerticle() {
     return promise.future()
   }
 
+  // ---- SENSOR DATA TABLE CREATION ----
+
+  fun createBatteryReadingsTable(): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          CREATE TABLE IF NOT EXISTS `battery_readings` (
+            `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+            `device_id` VARCHAR(128) NOT NULL,
+            `percentage` DOUBLE NOT NULL,
+            `charging_status` VARCHAR(20) DEFAULT 'unknown',
+            `timestamp` BIGINT NOT NULL,
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX `idx_device` (`device_id`),
+            INDEX `idx_timestamp` (`timestamp`)
+          )
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Created battery_readings table" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to create battery_readings table" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun createScreenEventsTable(): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          CREATE TABLE IF NOT EXISTS `screen_events` (
+            `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+            `device_id` VARCHAR(128) NOT NULL,
+            `state` VARCHAR(10) NOT NULL,
+            `timestamp` BIGINT NOT NULL,
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX `idx_device` (`device_id`),
+            INDEX `idx_timestamp` (`timestamp`)
+          )
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Created screen_events table" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to create screen_events table" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun createNotificationsTable(): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          CREATE TABLE IF NOT EXISTS `notifications` (
+            `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+            `device_id` VARCHAR(128) NOT NULL,
+            `app_name` VARCHAR(256),
+            `title` TEXT,
+            `content` TEXT,
+            `category` VARCHAR(50),
+            `kind` VARCHAR(20) DEFAULT 'posted',
+            `timestamp` BIGINT NOT NULL,
+            `dismissed_at` BIGINT NULL,
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX `idx_device` (`device_id`),
+            INDEX `idx_timestamp` (`timestamp`),
+            INDEX `idx_app` (`app_name`),
+            INDEX `idx_kind` (`kind`)
+          )
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Created notifications table" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to create notifications table" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  // ---- SENSOR DATA INSERT FUNCTIONS ----
+
+  fun insertBatteryReading(data: JsonObject): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    val deviceId = data.getString("device_id")
+    val percentage = data.getDouble("percentage")
+    val chargingStatus = data.getString("charging_status", "unknown")
+    val timestamp = data.getLong("timestamp")
+    
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          INSERT INTO battery_readings (device_id, percentage, charging_status, timestamp)
+          VALUES ('$deviceId', $percentage, '$chargingStatus', $timestamp)
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Inserted battery reading for $deviceId: $percentage% ($chargingStatus)" }
+            
+            // Publish update to event bus for real-time dashboard updates
+            val updateData = JsonObject()
+              .put("device_id", deviceId)
+              .put("percentage", percentage)
+              .put("charging_status", chargingStatus)
+              .put("timestamp", timestamp)
+            vertx.eventBus().publish("battery.update", updateData)
+            
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to insert battery reading" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun insertScreenEvent(data: JsonObject): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    val deviceId = data.getString("device_id")
+    val state = data.getString("state")
+    val timestamp = data.getLong("timestamp")
+    
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          INSERT INTO screen_events (device_id, state, timestamp)
+          VALUES ('$deviceId', '$state', $timestamp)
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Inserted screen event for $deviceId: $state" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to insert screen event" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun insertNotification(data: JsonObject): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    val deviceId = data.getString("device_id")
+    val appName = data.getString("app_name", "").replace("'", "''")
+    val title = data.getString("title", "").replace("'", "''")
+    val content = data.getString("content", "").replace("'", "''")
+    val category = data.getString("category", "").replace("'", "''")
+    val kind = data.getString("kind", "posted")
+    val timestamp = data.getLong("timestamp")
+    val dismissedAt = data.getLong("dismissed_at", 0L)
+    
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val dismissedAtValue = if (dismissedAt > 0) "$dismissedAt" else "NULL"
+        val query = """
+          INSERT INTO notifications (device_id, app_name, title, content, category, kind, timestamp, dismissed_at)
+          VALUES ('$deviceId', '$appName', '$title', '$content', '$category', '$kind', $timestamp, $dismissedAtValue)
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Inserted notification for $deviceId from $appName ($kind)" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to insert notification" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun getLatestBattery(deviceId: String): Future<JsonObject> {
+    val promise = Promise.promise<JsonObject>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          SELECT * FROM battery_readings 
+          WHERE device_id = '$deviceId' 
+          ORDER BY timestamp DESC LIMIT 1
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess { rows ->
+            if (rows.size() > 0) {
+              promise.complete(rows.first().toJson())
+            } else {
+              promise.complete(JsonObject())
+            }
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to get latest battery for $deviceId" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
   // ---- PARTICIPANT OPERATIONS ----
 
   fun getAllParticipants(): Future<JsonArray> {
@@ -527,7 +838,14 @@ class MySQLVerticle : AbstractVerticle() {
     sqlClient.getConnection { connectionResult ->
       if (connectionResult.succeeded()) {
         val connection = connectionResult.result()
-        connection.query("SELECT * FROM participants ORDER BY name ASC").execute()
+        val query = """
+          SELECT p.*, b.percentage, b.charging_status 
+          FROM participants p 
+          LEFT JOIN battery_readings b ON p.device_id = b.device_id 
+          AND b.timestamp = (SELECT MAX(timestamp) FROM battery_readings b2 WHERE b2.device_id = p.device_id) 
+          ORDER BY p.name ASC
+        """.trimIndent()
+        connection.query(query).execute()
           .onSuccess { rows ->
             val result = JsonArray(StreamSupport.stream(rows.spliterator(), false)
               .map { row -> row.toJson() }
