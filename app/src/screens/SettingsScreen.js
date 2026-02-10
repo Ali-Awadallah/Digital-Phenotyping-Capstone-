@@ -1,8 +1,10 @@
-import { View, Text, StyleSheet, Switch, Alert } from "react-native";
+import { View, Text, StyleSheet, Switch, Alert, TouchableOpacity, ActivityIndicator } from "react-native";
+import { useState } from "react";
 import { Ionicons as Icon } from "@expo/vector-icons";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useApp } from "../context/AppContext";
 import ScreenContainer from "../components/ScreenContainer";
+import HealthConnectService from "../services/HealthConnectService";
 
 export default function SettingsScreen() {
   const {
@@ -27,6 +29,12 @@ export default function SettingsScreen() {
     stopBackgroundService,
   } = useApp();
 
+  // Health Connect state
+  const [hcAvailable, setHcAvailable] = useState(null);
+  const [hcPermissions, setHcPermissions] = useState(null);
+  const [hcLoading, setHcLoading] = useState(false);
+  const [hcData, setHcData] = useState(null);
+
   const handleBackgroundServiceToggle = async (next) => {
     if (next) {
       await startBackgroundService();
@@ -43,6 +51,109 @@ export default function SettingsScreen() {
           },
         ]
       );
+    }
+  };
+
+  const handleCheckAvailability = async () => {
+    setHcLoading(true);
+    try {
+      const available = await HealthConnectService.isAvailable();
+      setHcAvailable(available);
+      Alert.alert(
+        "Health Connect",
+        available
+          ? "✅ Health Connect is available on this device!"
+          : "❌ Health Connect is NOT available. Please install it from the Play Store."
+      );
+    } catch (e) {
+      Alert.alert("Error", e.message || "Failed to check availability");
+    }
+    setHcLoading(false);
+  };
+
+  const handleRequestPermissions = async () => {
+    setHcLoading(true);
+    try {
+      const available = await HealthConnectService.isAvailable();
+      if (!available) {
+        Alert.alert("Health Connect", "Health Connect is not available on this device. Please install it first.");
+        setHcLoading(false);
+        return;
+      }
+
+      await HealthConnectService.requestPermissions();
+
+      // Check permission status after requesting
+      const status = await HealthConnectService.getPermissionStatus();
+      setHcPermissions(status);
+
+      const granted = Object.entries(status)
+        .filter(([, v]) => v)
+        .map(([k]) => k);
+      const denied = Object.entries(status)
+        .filter(([, v]) => !v)
+        .map(([k]) => k);
+
+      if (denied.length === 0) {
+        Alert.alert("Permissions", "✅ All Health Connect permissions granted!");
+      } else {
+        Alert.alert(
+          "Permissions",
+          `Granted: ${granted.join(", ") || "none"}\n\nDenied: ${denied.join(", ") || "none"}\n\nYou may need to open Health Connect settings to grant all permissions.`
+        );
+      }
+    } catch (e) {
+      Alert.alert("Error", e.message || "Failed to request permissions");
+    }
+    setHcLoading(false);
+  };
+
+  const handleFetchData = async () => {
+    setHcLoading(true);
+    try {
+      const hasPermissions = await HealthConnectService.checkPermissions();
+      if (!hasPermissions) {
+        Alert.alert("Health Connect", "Please grant permissions first before fetching data.");
+        setHcLoading(false);
+        return;
+      }
+
+      const data = await HealthConnectService.getLast24HoursData();
+      setHcData(data);
+
+      const summary = [
+        `❤️ Heart Rate: ${data.heartRate?.length || 0} samples`,
+        `👣 Steps: ${data.steps?.length || 0} records`,
+        `😴 Sleep: ${data.sleep?.length || 0} sessions`,
+        `🩸 Blood Pressure: ${data.bloodPressure?.length || 0} readings`,
+        `⚖️ Weight: ${data.weight?.length || 0} records`,
+        `🫁 SpO2: ${data.oxygenSaturation?.length || 0} readings`,
+        `💨 Respiratory: ${data.respiratoryRate?.length || 0} readings`,
+      ].join("\n");
+
+      // Show step total if available
+      let extraInfo = "";
+      if (data.steps?.length > 0) {
+        const totalSteps = data.steps.reduce((sum, s) => sum + s.count, 0);
+        extraInfo += `\n\nTotal steps (24h): ${totalSteps}`;
+      }
+      if (data.heartRate?.length > 0) {
+        const lastHR = data.heartRate[data.heartRate.length - 1];
+        extraInfo += `\nLatest heart rate: ${lastHR.bpm} bpm`;
+      }
+
+      Alert.alert("Last 24 Hours Data", summary + extraInfo);
+    } catch (e) {
+      Alert.alert("Error", e.message || "Failed to fetch health data");
+    }
+    setHcLoading(false);
+  };
+
+  const handleOpenSettings = async () => {
+    try {
+      await HealthConnectService.openSettings();
+    } catch (e) {
+      Alert.alert("Error", "Could not open Health Connect settings");
     }
   };
 
@@ -151,6 +262,59 @@ export default function SettingsScreen() {
           onChange={setCollectNotifications}
         />
       </View>
+
+      {/* Health Connect / Wearables Section */}
+      <Text style={styles.sectionTitle}>Wearables (Health Connect)</Text>
+      <View style={[styles.sensorSection, { borderLeftColor: '#E91E63' }]}>
+        <Text style={styles.hcDescription}>
+          Connect to smartwatches and fitness trackers via Health Connect to collect heart rate, steps, sleep, and more. This is optional.
+        </Text>
+
+        {hcLoading && (
+          <View style={styles.hcLoadingRow}>
+            <ActivityIndicator size="small" color="#15d6a9" />
+            <Text style={styles.hcLoadingText}>Working...</Text>
+          </View>
+        )}
+
+        <TouchableOpacity style={styles.hcButton} onPress={handleCheckAvailability} disabled={hcLoading}>
+          <MaterialIcons name="check-circle-outline" size={20} color="#15d6a9" />
+          <Text style={styles.hcButtonText}>Check Availability</Text>
+          {hcAvailable !== null && (
+            <Text style={[styles.hcStatusBadge, { backgroundColor: hcAvailable ? '#1b5e20' : '#b71c1c' }]}>
+              {hcAvailable ? 'Available' : 'Not Available'}
+            </Text>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.hcButton} onPress={handleRequestPermissions} disabled={hcLoading}>
+          <MaterialIcons name="security" size={20} color="#FF9500" />
+          <Text style={styles.hcButtonText}>Request Permissions</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.hcButton} onPress={handleFetchData} disabled={hcLoading}>
+          <MaterialIcons name="download" size={20} color="#5856D6" />
+          <Text style={styles.hcButtonText}>Fetch Last 24h Data</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.hcButton} onPress={handleOpenSettings} disabled={hcLoading}>
+          <MaterialIcons name="settings" size={20} color="#888" />
+          <Text style={styles.hcButtonText}>Open Health Connect Settings</Text>
+        </TouchableOpacity>
+
+        {/* Permission Status Display */}
+        {hcPermissions && (
+          <View style={styles.hcPermGrid}>
+            <Text style={styles.hcPermTitle}>Permission Status:</Text>
+            {Object.entries(hcPermissions).map(([key, granted]) => (
+              <View key={key} style={styles.hcPermRow}>
+                <Text style={styles.hcPermIcon}>{granted ? '✅' : '❌'}</Text>
+                <Text style={styles.hcPermLabel}>{key}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+      </View>
     </ScreenContainer>
   );
 }
@@ -241,5 +405,76 @@ const styles = StyleSheet.create({
     fontFamily: "Archivo-Medium",
     marginTop: 16,
     marginBottom: 8,
+  },
+  // Health Connect styles
+  hcDescription: {
+    fontSize: 14,
+    color: "#999",
+    fontFamily: "Archivo",
+    marginBottom: 12,
+    lineHeight: 20,
+  },
+  hcLoadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 8,
+    marginBottom: 4,
+  },
+  hcLoadingText: {
+    color: "#15d6a9",
+    fontSize: 14,
+    fontFamily: "Archivo",
+    marginLeft: 8,
+  },
+  hcButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: "#6464644a",
+  },
+  hcButtonText: {
+    color: "#ccccccff",
+    fontSize: 15,
+    fontFamily: "Archivo-SemiBold",
+    marginLeft: 10,
+    flex: 1,
+  },
+  hcStatusBadge: {
+    color: "#fff",
+    fontSize: 11,
+    fontFamily: "Archivo-SemiBold",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    overflow: "hidden",
+  },
+  hcPermGrid: {
+    marginTop: 12,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#6464644a",
+  },
+  hcPermTitle: {
+    color: "#aaa",
+    fontSize: 13,
+    fontFamily: "Archivo-SemiBold",
+    marginBottom: 6,
+  },
+  hcPermRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 3,
+  },
+  hcPermIcon: {
+    fontSize: 14,
+    marginRight: 8,
+  },
+  hcPermLabel: {
+    color: "#ccccccff",
+    fontSize: 14,
+    fontFamily: "Archivo",
+    textTransform: "capitalize",
   },
 });

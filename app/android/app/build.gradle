@@ -89,7 +89,7 @@ android {
     namespace 'com.dp.demo'
     defaultConfig {
         applicationId 'com.dp.demo'
-        minSdkVersion rootProject.ext.minSdkVersion
+        minSdkVersion 26  // Required for Health Connect SDK
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0.0"
@@ -181,4 +181,7 @@ dependencies {
     
     // OkHttp for native HTTP requests to backend API
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    
+    // Health Connect SDK for wearable data (heart rate, steps, sleep, etc.)
+    implementation("androidx.health.connect:connect-client:1.1.0-alpha10")
 }

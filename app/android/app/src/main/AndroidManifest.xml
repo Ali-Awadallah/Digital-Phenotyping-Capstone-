@@ -21,6 +21,15 @@
   <uses-permission android:name="android.permission.WAKE_LOCK"/>
   <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS"/>
   
+  <!-- Health Connect Permissions (optional wearable data) -->
+  <uses-permission android:name="android.permission.health.READ_HEART_RATE"/>
+  <uses-permission android:name="android.permission.health.READ_STEPS"/>
+  <uses-permission android:name="android.permission.health.READ_SLEEP"/>
+  <uses-permission android:name="android.permission.health.READ_BLOOD_PRESSURE"/>
+  <uses-permission android:name="android.permission.health.READ_WEIGHT"/>
+  <uses-permission android:name="android.permission.health.READ_OXYGEN_SATURATION"/>
+  <uses-permission android:name="android.permission.health.READ_RESPIRATORY_RATE"/>
+  
   <queries>
     <intent>
       <action android:name="android.intent.action.VIEW"/>
@@ -38,6 +47,8 @@
     <package android:name="com.facebook.katana"/>
     <package android:name="com.whatsapp"/>
     <package android:name="com.snapchat.android"/>
+    <!-- Health Connect app -->
+    <package android:name="com.google.android.apps.healthdata"/>
   </queries>
   <application android:name=".MainApplication" android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:allowBackup="true" android:theme="@style/AppTheme" android:supportsRtl="true" android:enableOnBackInvokedCallback="false">
     <meta-data android:name="expo.modules.updates.ENABLED" android:value="false"/>
@@ -47,6 +58,19 @@
       <intent-filter>
         <action android:name="android.intent.action.MAIN"/>
         <category android:name="android.intent.category.LAUNCHER"/>
+      </intent-filter>
+    </activity>
+    <!-- Health Connect Privacy Policy Activity -->
+    <activity
+      android:name=".HealthConnectPrivacyPolicy"
+      android:exported="true"
+      android:label="Privacy Policy">
+      <intent-filter>
+        <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE"/>
+      </intent-filter>
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW_PERMISSION_USAGE"/>
+        <category android:name="android.intent.category.HEALTH_PERMISSIONS"/>
       </intent-filter>
     </activity>
     <receiver android:name=".ScreenEventsReceiver" android:exported="false">

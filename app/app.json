@@ -17,6 +17,7 @@
     },
     "android": {
       "package": "com.dp.capstone",
+      "minSdkVersion": 26,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
