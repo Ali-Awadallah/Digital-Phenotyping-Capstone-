@@ -620,6 +620,48 @@ class MainVerticle : AbstractVerticle() {
           }
         }
 
+        // GET /api/accel-alerts?active=true|false
+        api.get("/accel-alerts").handler { ctx ->
+          val activeOnly = ctx.queryParam("active").firstOrNull()?.toBoolean() ?: false
+
+          vertx.eventBus().request<JsonArray>(
+            "getAccelAlerts",
+            JsonObject().put("active_only", activeOnly)
+          ) { ar ->
+            if (ar.succeeded()) {
+              ctx.response()
+                .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                .end(ar.result().body().encode())
+            } else {
+              ctx.response().setStatusCode(500)
+                .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                .end(JsonObject().put("error", ar.cause().message).encode())
+            }
+          }
+        }
+
+        // POST /api/accel-alerts/:alertId/acknowledge?by=admin
+        api.post("/accel-alerts/:alertId/acknowledge").handler { ctx ->
+          val alertId = ctx.pathParam("alertId").toInt()
+          val by = ctx.queryParam("by").firstOrNull() ?: "admin"
+
+          vertx.eventBus().request<JsonObject>(
+            "acknowledgeAccelAlert",
+            JsonObject().put("alert_id", alertId).put("acknowledged_by", by)
+          ) { ar ->
+            if (ar.succeeded()) {
+              ctx.response()
+                .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                .end(JsonObject().put("ok", true).encode())
+            } else {
+              ctx.response().setStatusCode(500)
+                .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                .end(JsonObject().put("error", ar.cause().message).encode())
+            }
+          }
+        }
+
+
         // GET /api/participants/:deviceId/location - Get latest location for participant
         api.get("/participants/:deviceId/location").handler { ctx ->
           val deviceId = ctx.pathParam("deviceId")

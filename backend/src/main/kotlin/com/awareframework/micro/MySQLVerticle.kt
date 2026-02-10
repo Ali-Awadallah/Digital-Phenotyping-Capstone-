@@ -115,6 +115,8 @@ class MySQLVerticle : AbstractVerticle() {
         createBatteryReadingsTable()
         createScreenEventsTable()
         createNotificationsTable()
+        createAccelAlertsTable()
+        createAccelAiStateTable()
 
         // Get all participants
         eventBus.consumer<JsonObject>("getParticipants") { receivedMessage ->
@@ -220,6 +222,31 @@ class MySQLVerticle : AbstractVerticle() {
               receivedMessage.reply(JsonObject().put("ok", true))
             } else {
               receivedMessage.fail(500, response.cause().message ?: "Failed to acknowledge alert")
+            }
+          }
+        }
+
+        // Get accelerometer anomaly alerts
+        eventBus.consumer<JsonObject>("getAccelAlerts") { receivedMessage ->
+          val activeOnly = receivedMessage.body().getBoolean("active_only", false)
+          getAccelAlerts(activeOnly).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(response.result())
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to get accel alerts")
+            }
+          }
+        }
+
+        // Acknowledge accelerometer anomaly alert
+        eventBus.consumer<JsonObject>("acknowledgeAccelAlert") { receivedMessage ->
+          val alertId = receivedMessage.body().getInteger("alert_id")
+          val acknowledgedBy = receivedMessage.body().getString("acknowledged_by", "admin")
+          acknowledgeAccelAlert(alertId, acknowledgedBy).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(JsonObject().put("ok", true))
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to acknowledge accel alert")
             }
           }
         }
@@ -340,7 +367,7 @@ class MySQLVerticle : AbstractVerticle() {
         for (i in 0 until data.size()) {
           val entry = data.getJsonObject(i)
           val updateItem =
-            "UPDATE '$table' SET data = $entry WHERE device_id = '$device_id' AND timestamp = ${entry.getDouble("timestamp")}"
+            "UPDATE `$table` SET data = $entry WHERE device_id = '$device_id' AND timestamp = ${entry.getDouble("timestamp")}"
 
           // https://access.redhat.com/documentation/ja-jp/red_hat_build_of_eclipse_vert.x/4.0/html/eclipse_vert.x_4.0_migration_guide/changes-in-vertx-jdbc-client_changes-in-client-components#running_queries_on_managed_connections
           connection.query(updateItem)
@@ -371,7 +398,7 @@ class MySQLVerticle : AbstractVerticle() {
         }
 
         val deleteBatch =
-          "DELETE from '$table' WHERE device_id = '$device_id' AND timestamp in (${timestamps.stream().map(Any::toString).collect(
+          "DELETE FROM `$table` WHERE device_id = '$device_id' AND timestamp in (${timestamps.stream().map(Any::toString).collect(
             Collectors.joining(",")
           )})"
         connection.query(deleteBatch)
@@ -688,6 +715,88 @@ class MySQLVerticle : AbstractVerticle() {
     }
     return promise.future()
   }
+
+  fun createAccelAlertsTable(): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    sqlClient.getConnection { connectionResult ->
+        if (connectionResult.succeeded()) {
+            val connection = connectionResult.result()
+            val query = """
+                CREATE TABLE IF NOT EXISTS `accel_alerts` (
+                    `alert_id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    `participant_id` VARCHAR(36) NOT NULL,
+                    `triggered_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    `anomaly_type` VARCHAR(50) NOT NULL,
+                    `anomaly_score` DOUBLE NOT NULL,
+                    `acknowledged` TINYINT(1) DEFAULT 0,
+                    `acknowledged_by` VARCHAR(100) NULL,
+                    `acknowledged_at` TIMESTAMP NULL,
+                    `metadata` JSON NULL,
+                    INDEX `idx_participant` (`participant_id`),
+                    INDEX `idx_acknowledged` (`acknowledged`),
+                    INDEX `idx_triggered` (`triggered_at`)
+                )
+            """.trimIndent()
+
+            connection.query(query).execute()
+                .onSuccess {
+                    logger.info { "Created accel_alerts table" }
+                    promise.complete(true)
+                    connection.close()
+                }
+                .onFailure { e ->
+                    logger.error(e) { "Failed to create accel_alerts table" }
+                    promise.fail(e.message)
+                    connection.close()
+                }
+        } else {
+            promise.fail(connectionResult.cause().message)
+        }
+    }
+    return promise.future()
+}
+
+fun createAccelAiStateTable(): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    sqlClient.getConnection { connectionResult ->
+        if (connectionResult.succeeded()) {
+            val connection = connectionResult.result()
+            val query = """
+                CREATE TABLE IF NOT EXISTS `accel_ai_state` (
+                    `state_id` INT PRIMARY KEY,
+                    `last_end_time_str` VARCHAR(64) NULL
+                )
+            """.trimIndent()
+
+            connection.query(query).execute()
+                .onSuccess {
+                    // Ensure the singleton row exists
+                    connection.query("INSERT IGNORE INTO accel_ai_state (state_id, last_end_time_str) VALUES (1, NULL)")
+                        .execute()
+                        .onSuccess {
+                            logger.info { "Created accel_ai_state table" }
+                            promise.complete(true)
+                            connection.close()
+                        }
+                        .onFailure { e ->
+                            logger.error(e) { "Failed to seed accel_ai_state row" }
+                            promise.fail(e.message)
+                            connection.close()
+                        }
+                }
+                .onFailure { e ->
+                    logger.error(e) { "Failed to create accel_ai_state table" }
+                    promise.fail(e.message)
+                    connection.close()
+                }
+        } else {
+            promise.fail(connectionResult.cause().message)
+        }
+    }
+    return promise.future()
+}
+
+  
 
   // ---- SENSOR DATA INSERT FUNCTIONS ----
 
@@ -1094,14 +1203,16 @@ class MySQLVerticle : AbstractVerticle() {
     sqlClient.getConnection { connectionResult ->
       if (connectionResult.succeeded()) {
         val connection = connectionResult.result()
+        val safeBy = acknowledgedBy.replace("'", "''")
         val query = """
-          UPDATE geofence_alerts 
-          SET acknowledged = TRUE, acknowledged_by = '$acknowledgedBy', acknowledged_at = NOW()
+          UPDATE geofence_alerts
+          SET acknowledged = TRUE, acknowledged_by = '$safeBy', acknowledged_at = NOW()
           WHERE alert_id = '$alertId'
         """.trimIndent()
+
         connection.query(query).execute()
           .onSuccess {
-            logger.info { "Acknowledged alert: $alertId by $acknowledgedBy" }
+            logger.info { "Acknowledged alert: $alertId by $safeBy" }
             promise.complete(true)
             connection.close()
           }
@@ -1117,6 +1228,80 @@ class MySQLVerticle : AbstractVerticle() {
     return promise.future()
   }
 
+fun getAccelAlerts(activeOnly: Boolean): Future<JsonArray> {
+    val promise = Promise.promise<JsonArray>()
+    sqlClient.getConnection { connectionResult ->
+        if (connectionResult.succeeded()) {
+            val connection = connectionResult.result()
+            val whereClause = if (activeOnly) "WHERE acknowledged = 0" else ""
+            val query = """
+                SELECT
+                    alert_id,
+                    participant_id,
+                    triggered_at,
+                    anomaly_type,
+                    anomaly_score,
+                    acknowledged,
+                    acknowledged_by,
+                    acknowledged_at,
+                    metadata
+                FROM accel_alerts
+                $whereClause
+                ORDER BY triggered_at DESC
+                LIMIT 200
+            """.trimIndent()
+
+            connection.query(query).execute()
+                .onSuccess { rows ->
+                    val result = JsonArray(
+                        StreamSupport.stream(rows.spliterator(), false)
+                            .map { row -> row.toJson() }
+                            .collect(Collectors.toList())
+                    )
+                    promise.complete(result)
+                    connection.close()
+                }
+                .onFailure { e ->
+                    logger.error(e) { "Failed to get accel alerts" }
+                    promise.fail(e.message)
+                    connection.close()
+                }
+        } else {
+            promise.fail(connectionResult.cause().message)
+        }
+    }
+    return promise.future()
+}
+
+fun acknowledgeAccelAlert(alertId: Int, acknowledgedBy: String): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    sqlClient.getConnection { connectionResult ->
+        if (connectionResult.succeeded()) {
+            val connection = connectionResult.result()
+            val safeBy = acknowledgedBy.replace("'", "''")
+            val query = """
+                UPDATE accel_alerts
+                SET acknowledged = 1, acknowledged_by = '$safeBy', acknowledged_at = NOW()
+                WHERE alert_id = $alertId
+            """.trimIndent()
+
+            connection.query(query).execute()
+                .onSuccess {
+                    logger.info { "Acknowledged accel alert: $alertId by $safeBy" }
+                    promise.complete(true)
+                    connection.close()
+                }
+                .onFailure { e ->
+                    logger.error(e) { "Failed to acknowledge accel alert" }
+                    promise.fail(e.message)
+                    connection.close()
+                }
+        } else {
+            promise.fail(connectionResult.cause().message)
+        }
+    }
+    return promise.future()
+}
   fun checkRecentAlert(participantId: String, zoneId: String, windowMinutes: Int): Future<Boolean> {
     val promise = Promise.promise<Boolean>()
     sqlClient.getConnection { connectionResult ->

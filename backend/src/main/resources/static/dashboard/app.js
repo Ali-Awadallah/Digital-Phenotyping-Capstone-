@@ -54,13 +54,13 @@
         // Alert filter
         const alertFilter = document.getElementById('alert-filter');
         if (alertFilter) {
-            alertFilter.addEventListener('change', filterAlerts);
+            alertFilter.addEventListener('change', () => loadAlertsList());
         }
 
         // Refresh buttons
         const refreshMapBtn = document.getElementById('refresh-map-btn');
         if (refreshMapBtn) {
-            refreshMapBtn.addEventListener('click', refreshMapData);
+            refreshMapBtn.addEventListener('click', () => loadDashboardData());
         }
 
         const refreshAlertsBtn = document.getElementById('refresh-alerts-btn');
@@ -202,16 +202,33 @@
             return null;
         }
     }
+    function safeJsonParse(v) {
+        if (!v) return null;
+        if (typeof v === 'object') return v;
+        try { return JSON.parse(v); } catch (e) { return null; }
+    }
+
+    function getAccelMeta(alert) {
+        // metadata may come as object (MySQL JSON), string, or null
+        return safeJsonParse(alert.metadata) || {};
+    }
 
     // ---- DATA LOADING FUNCTIONS ----
 
     async function loadDashboardData() {
         // Load participants count
-        const participants = await apiGet('/participants');
-        const alerts = await apiGet('/alerts?active=true');
+        const geofenceAlerts = await apiGet('/alerts?active=true');
+        const accelAlerts = await apiGet('/accel-alerts?active=true');
 
-        state.participants = participants || [];
-        state.alerts = alerts || [];
+        const merged = [
+            ...(geofenceAlerts || []).map(a => ({ ...a, alert_type: 'geofence' })),
+            ...(accelAlerts || []).map(a => ({ ...a, alert_type: 'accel' }))
+        ];
+
+        merged.sort((a, b) => new Date(b.triggered_at).getTime() - new Date(a.triggered_at).getTime());
+        state.alerts = merged;
+
+
 
         // Update stats
         document.getElementById('stat-participants').textContent = state.participants.length;
@@ -250,25 +267,52 @@
     }
 
     // ---- RECENT ALERTS (Dashboard) ----
-
     function loadRecentAlerts() {
         const tbody = document.getElementById('recent-alerts-table');
         if (!tbody) return;
 
-        if (state.alerts.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#888;">No active alerts</td></tr>';
+        const recentAlerts = state.alerts.slice(0, 5);
+
+        if (recentAlerts.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#888;">No alerts</td></tr>';
             return;
         }
 
-        const recentAlerts = state.alerts.slice(0, 5);
-        tbody.innerHTML = recentAlerts.map(alert => `
-            <tr>
-                <td>${formatTimestamp(alert.triggered_at)}</td>
-                <td>${alert.participant_name || alert.participant_id}</td>
-                <td>Entered: ${alert.zone_name || 'Red Zone'}</td>
-                <td><span class="risk-badge risk-high">geofence</span></td>
-            </tr>
-        `).join('');
+        tbody.innerHTML = recentAlerts.map(alert => {
+            const isGeofence = alert.alert_type === 'geofence';
+
+            if (isGeofence) {
+                return `
+        <tr>
+          <td>${formatTimestamp(alert.triggered_at)}</td>
+          <td>${alert.participant_name || alert.participant_id || '--'}</td>
+          <td>Entered: ${alert.zone_name || 'Red Zone'}</td>
+          <td><span class="risk-badge risk-high">${alert.alert_type}</span></td>
+        </tr>
+      `;
+            }
+
+            const meta = getAccelMeta(alert);
+            const score = (alert.anomaly_score !== null && alert.anomaly_score !== undefined)
+                ? Number(alert.anomaly_score).toFixed(4)
+                : '--';
+            const count = (meta.anomaly_count !== null && meta.anomaly_count !== undefined)
+                ? meta.anomaly_count
+                : '--';
+            const windowKey = meta.window_key ? meta.window_key : null;
+
+            return `
+      <tr>
+        <td>${formatTimestamp(alert.triggered_at)}</td>
+        <td>${alert.participant_name || alert.participant_id || '--'}</td>
+        <td>
+          Anomaly: ${alert.anomaly_type || 'ACCEL_ANOMALY'}
+          (score: ${score}, count: ${count}${windowKey ? `, window: ${windowKey}` : ''})
+        </td>
+        <td><span class="risk-badge risk-high">${alert.alert_type}</span></td>
+      </tr>
+    `;
+        }).join('');
     }
 
     // ---- PARTICIPANTS VIEW ----
@@ -416,7 +460,20 @@
             endpoint = '/alerts?active=true';
         }
 
-        const alerts = await apiGet(endpoint);
+        const geofenceAlerts = await apiGet(endpoint);
+        const accelEndpoint = (filter === 'active') ? '/accel-alerts?active=true' : '/accel-alerts';
+        const accelAlerts = await apiGet(accelEndpoint);
+
+        let alerts = [
+            ...(geofenceAlerts || []).map(a => ({ ...a, alert_type: 'geofence' })),
+            ...(accelAlerts || []).map(a => ({ ...a, alert_type: 'accel' }))
+        ];
+
+        if (filter === 'acknowledged') alerts = alerts.filter(a => a.acknowledged);
+        if (filter === 'active') alerts = alerts.filter(a => !a.acknowledged);
+
+        alerts.sort((a, b) => new Date(b.triggered_at).getTime() - new Date(a.triggered_at).getTime());
+
 
         if (!alerts || alerts.length === 0) {
             container.innerHTML = '<div class="alert-item info"><div class="alert-content"><div class="alert-title">No Alerts</div><div class="alert-description">No geofence alerts have been triggered.</div></div></div>';
@@ -431,32 +488,62 @@
             filteredAlerts = alerts.filter(a => !a.acknowledged);
         }
 
-        container.innerHTML = filteredAlerts.map(alert => `
-            <div class="alert-item ${alert.acknowledged ? 'info' : 'critical'}">
-                <div class="alert-icon">${alert.acknowledged ? '<i class="fas fa-check"></i>' : '<i class="fas fa-exclamation"></i>'}</div>
-                <div class="alert-content">
-                    <div class="alert-title">Geofence Breach: ${alert.zone_name || 'Red Zone'}</div>
-                    <div class="alert-description">
-                        Participant ${alert.participant_name || alert.participant_id} entered a red zone.
-                        Distance from center: ${Math.round(alert.distance)}m
-                    </div>
-                    <div class="alert-meta">
-                        ${formatTimestamp(alert.triggered_at)}
-                        ${alert.acknowledged ? `| Acknowledged by ${alert.acknowledged_by}` : ''}
-                    </div>
-                </div>
-                <div class="alert-actions">
-                    ${!alert.acknowledged ? `
-                        <button class="btn btn-sm btn-primary" onclick="acknowledgeAlert('${alert.alert_id}')"><i style="margin-right: 5px;" class="fas fa-check"></i> Acknowledge</button>
-                    ` : ''}
-                </div>
-            </div>
-        `).join('');
+        container.innerHTML = filteredAlerts.map(alert => {
+            const isGeofence = alert.alert_type === 'geofence';
+
+            const title = isGeofence
+                ? `Geofence Breach: ${alert.zone_name || 'Red Zone'}`
+                : `Accelerometer Anomaly: ${alert.anomaly_type || 'ACCEL_ANOMALY'}`;
+
+            let desc;
+
+            if (isGeofence) {
+                desc = `Participant ${alert.participant_name || alert.participant_id} entered a red zone. Distance from center: ${Math.round(alert.distance)}m`;
+            } else {
+                const meta = getAccelMeta(alert);
+
+                const score = (alert.anomaly_score !== null && alert.anomaly_score !== undefined)
+                    ? Number(alert.anomaly_score).toFixed(4)
+                    : '--';
+
+                const parts = [
+                    `Participant ${alert.participant_name || alert.participant_id || '--'} detected anomaly.`,
+                    `Score: ${score}`
+                ];
+
+                if (meta.anomaly_count !== null && meta.anomaly_count !== undefined) parts.push(`Count: ${meta.anomaly_count}`);
+                if (meta.window_key) parts.push(`Window: ${meta.window_key}`);
+
+                desc = parts.join(' ');
+            }
+
+            const ackText = alert.acknowledged ? `| Acknowledged by ${alert.acknowledged_by || ''}` : '';
+
+            const ackBtn = (!alert.acknowledged)
+                ? (isGeofence
+                    ? `<button class="btn btn-sm btn-primary" onclick="acknowledgeAlert('${alert.alert_id}')"><i style="margin-right: 5px;" class="fas fa-check"></i> Acknowledge</button>`
+                    : `<button class="btn btn-sm btn-primary" onclick="acknowledgeAccelAlert(${alert.alert_id})"><i style="margin-right: 5px;" class="fas fa-check"></i> Acknowledge</button>`
+                )
+                : '';
+
+            return `
+    <div class="alert-item ${alert.acknowledged ? 'info' : 'critical'}">
+      <div class="alert-icon">${alert.acknowledged ? '<i class="fas fa-check"></i>' : '<i class="fas fa-exclamation"></i>'}</div>
+      <div class="alert-content">
+        <div class="alert-title">${title}</div>
+        <div class="alert-description">${desc}</div>
+        <div class="alert-meta">
+          ${formatTimestamp(alert.triggered_at)} ${alert.acknowledged ? ackText : ''}
+        </div>
+      </div>
+      <div class="alert-actions">
+        ${ackBtn}
+      </div>
+    </div>
+  `;
+        }).join('');
     }
 
-    function filterAlerts() {
-        loadAlertsList();
-    }
 
     // Global function for acknowledge button
     window.acknowledgeAlert = async function (alertId) {
@@ -467,6 +554,20 @@
             loadDashboardData(); // Refresh dashboard stats too
         }
     };
+    // Global function for acknowledge ACCEL alert button
+    window.acknowledgeAccelAlert = async function (alertId) {
+        const username = sessionStorage.getItem('dp_ids_user') || 'admin';
+
+        // Calls: POST /api/accel-alerts/:alertId/acknowledge?by=username
+        const result = await apiPost(`/accel-alerts/${alertId}/acknowledge?by=${username}`, {});
+
+        if (result && result.ok) {
+            loadAlertsList();
+            loadDashboardData();
+        }
+    };
+
+
 
     // ---- PARTICIPANT MODAL FUNCTIONS ----
 
