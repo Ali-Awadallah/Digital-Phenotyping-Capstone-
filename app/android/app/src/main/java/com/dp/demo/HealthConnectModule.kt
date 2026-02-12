@@ -436,4 +436,105 @@ class HealthConnectModule(reactContext: ReactApplicationContext) : ReactContextB
             }
         }
     }
+
+    @ReactMethod
+    fun syncToBackend(promise: Promise) {
+        val client = getHealthConnectClient()
+        if (client == null) {
+            promise.reject("UNAVAILABLE", "Health Connect is not available")
+            return
+        }
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val granted = client.permissionController.getGrantedPermissions()
+                if (granted.isEmpty()) {
+                    promise.reject("NO_PERMISSIONS", "No Health Connect permissions granted")
+                    return@launch
+                }
+
+                val context = reactApplicationContext
+                val prefs = context.getSharedPreferences("dp_prefs", android.content.Context.MODE_PRIVATE)
+                val lastSync = prefs.getLong("hc_last_sync_timestamp", System.currentTimeMillis() - 24 * 60 * 60 * 1000)
+                val nowMs = System.currentTimeMillis()
+                val start = Instant.ofEpochMilli(lastSync)
+                val now = Instant.ofEpochMilli(nowMs)
+                val timeRange = TimeRangeFilter.between(start, now)
+                var total = 0
+
+                // Heart Rate
+                try {
+                    val records = client.readRecords(ReadRecordsRequest(HeartRateRecord::class, timeRangeFilter = timeRange))
+                    for (record in records.records) {
+                        for (sample in record.samples) {
+                            BackendAPIClient.sendWearableHeartRate(context, sample.time.toEpochMilli(), sample.beatsPerMinute.toInt())
+                            total++
+                        }
+                    }
+                } catch (e: Exception) { Log.e(TAG, "Sync HR error", e) }
+
+                // Steps
+                try {
+                    val records = client.readRecords(ReadRecordsRequest(StepsRecord::class, timeRangeFilter = timeRange))
+                    for (record in records.records) {
+                        BackendAPIClient.sendWearableSteps(context, record.startTime.toEpochMilli(), record.endTime.toEpochMilli(), record.count.toInt())
+                        total++
+                    }
+                } catch (e: Exception) { Log.e(TAG, "Sync steps error", e) }
+
+                // Sleep
+                try {
+                    val records = client.readRecords(ReadRecordsRequest(SleepSessionRecord::class, timeRangeFilter = timeRange))
+                    for (record in records.records) {
+                        BackendAPIClient.sendWearableSleep(context, record.startTime.toEpochMilli(), record.endTime.toEpochMilli(), record.title ?: "Sleep", record.notes ?: "")
+                        total++
+                    }
+                } catch (e: Exception) { Log.e(TAG, "Sync sleep error", e) }
+
+                // Blood Pressure
+                try {
+                    val records = client.readRecords(ReadRecordsRequest(BloodPressureRecord::class, timeRangeFilter = timeRange))
+                    for (record in records.records) {
+                        BackendAPIClient.sendWearableBloodPressure(context, record.time.toEpochMilli(), record.systolic.inMillimetersOfMercury, record.diastolic.inMillimetersOfMercury)
+                        total++
+                    }
+                } catch (e: Exception) { Log.e(TAG, "Sync BP error", e) }
+
+                // Weight
+                try {
+                    val records = client.readRecords(ReadRecordsRequest(WeightRecord::class, timeRangeFilter = timeRange))
+                    for (record in records.records) {
+                        BackendAPIClient.sendWearableWeight(context, record.time.toEpochMilli(), record.weight.inKilograms)
+                        total++
+                    }
+                } catch (e: Exception) { Log.e(TAG, "Sync weight error", e) }
+
+                // Oxygen
+                try {
+                    val records = client.readRecords(ReadRecordsRequest(OxygenSaturationRecord::class, timeRangeFilter = timeRange))
+                    for (record in records.records) {
+                        BackendAPIClient.sendWearableOxygen(context, record.time.toEpochMilli(), record.percentage.value)
+                        total++
+                    }
+                } catch (e: Exception) { Log.e(TAG, "Sync oxygen error", e) }
+
+                // Respiratory
+                try {
+                    val records = client.readRecords(ReadRecordsRequest(RespiratoryRateRecord::class, timeRangeFilter = timeRange))
+                    for (record in records.records) {
+                        BackendAPIClient.sendWearableRespiratory(context, record.time.toEpochMilli(), record.rate)
+                        total++
+                    }
+                } catch (e: Exception) { Log.e(TAG, "Sync respiratory error", e) }
+
+                // Update last sync timestamp so next sync doesn't re-send
+                prefs.edit().putLong("hc_last_sync_timestamp", nowMs).apply()
+                promise.resolve("Synced $total records to backend")
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Error syncing to backend", e)
+                promise.reject("ERROR", e.message)
+            }
+        }
+    }
 }

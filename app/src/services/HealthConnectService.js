@@ -298,6 +298,14 @@ export async function getLast24HoursData() {
     };
 }
 
+/**
+ * Manually sync the last 24 hours of wearable data to the backend server
+ * @returns {Promise<string>} Summary message of records synced
+ */
+export async function syncToBackend() {
+    return await HealthConnectModule.syncToBackend();
+}
+
 export default {
     isAvailable,
     openSettings,
@@ -311,5 +319,6 @@ export default {
     getWeight,
     getOxygenSaturation,
     getRespiratoryRate,
-    getLast24HoursData
+    getLast24HoursData,
+    syncToBackend
 };

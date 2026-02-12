@@ -445,6 +445,180 @@ class MainVerticle : AbstractVerticle() {
           }
         }
 
+        // ---- WEARABLE DATA API ENDPOINTS ----
+
+        // POST /api/wearable/heart-rate
+        api.post("/wearable/heart-rate").handler { ctx ->
+          try {
+            val body = ctx.bodyAsJson
+            val data = JsonObject()
+              .put("device_id", body.getString("device_id") ?: "unknown")
+              .put("timestamp", body.getLong("timestamp"))
+              .put("bpm", body.getInteger("bpm"))
+            vertx.eventBus().request<JsonObject>("insertWearableHeartRate", data) { ar ->
+              if (ar.succeeded()) {
+                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode())
+              } else {
+                logger.error(ar.cause()) { "Failed to store wearable heart rate" }
+                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode())
+              }
+            }
+          } catch (e: Exception) {
+            logger.error(e) { "Error handling /api/wearable/heart-rate" }
+            ctx.response().setStatusCode(400).end(JsonObject().put("error", e.message).encode())
+          }
+        }
+
+        // POST /api/wearable/steps
+        api.post("/wearable/steps").handler { ctx ->
+          try {
+            val body = ctx.bodyAsJson
+            val data = JsonObject()
+              .put("device_id", body.getString("device_id") ?: "unknown")
+              .put("start_time", body.getLong("start_time"))
+              .put("end_time", body.getLong("end_time"))
+              .put("count", body.getInteger("count"))
+            vertx.eventBus().request<JsonObject>("insertWearableSteps", data) { ar ->
+              if (ar.succeeded()) {
+                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode())
+              } else {
+                logger.error(ar.cause()) { "Failed to store wearable steps" }
+                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode())
+              }
+            }
+          } catch (e: Exception) {
+            logger.error(e) { "Error handling /api/wearable/steps" }
+            ctx.response().setStatusCode(400).end(JsonObject().put("error", e.message).encode())
+          }
+        }
+
+        // POST /api/wearable/sleep
+        api.post("/wearable/sleep").handler { ctx ->
+          try {
+            val body = ctx.bodyAsJson
+            val data = JsonObject()
+              .put("device_id", body.getString("device_id") ?: "unknown")
+              .put("start_time", body.getLong("start_time"))
+              .put("end_time", body.getLong("end_time"))
+              .put("title", body.getString("title", "Sleep"))
+              .put("notes", body.getString("notes", ""))
+            vertx.eventBus().request<JsonObject>("insertWearableSleep", data) { ar ->
+              if (ar.succeeded()) {
+                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode())
+              } else {
+                logger.error(ar.cause()) { "Failed to store wearable sleep" }
+                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode())
+              }
+            }
+          } catch (e: Exception) {
+            logger.error(e) { "Error handling /api/wearable/sleep" }
+            ctx.response().setStatusCode(400).end(JsonObject().put("error", e.message).encode())
+          }
+        }
+
+        // POST /api/wearable/blood-pressure
+        api.post("/wearable/blood-pressure").handler { ctx ->
+          try {
+            val body = ctx.bodyAsJson
+            val data = JsonObject()
+              .put("device_id", body.getString("device_id") ?: "unknown")
+              .put("timestamp", body.getLong("timestamp"))
+              .put("systolic", body.getDouble("systolic"))
+              .put("diastolic", body.getDouble("diastolic"))
+            vertx.eventBus().request<JsonObject>("insertWearableBloodPressure", data) { ar ->
+              if (ar.succeeded()) {
+                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode())
+              } else {
+                logger.error(ar.cause()) { "Failed to store wearable blood pressure" }
+                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode())
+              }
+            }
+          } catch (e: Exception) {
+            logger.error(e) { "Error handling /api/wearable/blood-pressure" }
+            ctx.response().setStatusCode(400).end(JsonObject().put("error", e.message).encode())
+          }
+        }
+
+        // POST /api/wearable/weight
+        api.post("/wearable/weight").handler { ctx ->
+          try {
+            val body = ctx.bodyAsJson
+            val data = JsonObject()
+              .put("device_id", body.getString("device_id") ?: "unknown")
+              .put("timestamp", body.getLong("timestamp"))
+              .put("weight_kg", body.getDouble("weight_kg"))
+            vertx.eventBus().request<JsonObject>("insertWearableWeight", data) { ar ->
+              if (ar.succeeded()) {
+                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode())
+              } else {
+                logger.error(ar.cause()) { "Failed to store wearable weight" }
+                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode())
+              }
+            }
+          } catch (e: Exception) {
+            logger.error(e) { "Error handling /api/wearable/weight" }
+            ctx.response().setStatusCode(400).end(JsonObject().put("error", e.message).encode())
+          }
+        }
+
+        // POST /api/wearable/oxygen
+        api.post("/wearable/oxygen").handler { ctx ->
+          try {
+            val body = ctx.bodyAsJson
+            val data = JsonObject()
+              .put("device_id", body.getString("device_id") ?: "unknown")
+              .put("timestamp", body.getLong("timestamp"))
+              .put("percentage", body.getDouble("percentage"))
+            vertx.eventBus().request<JsonObject>("insertWearableOxygen", data) { ar ->
+              if (ar.succeeded()) {
+                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode())
+              } else {
+                logger.error(ar.cause()) { "Failed to store wearable oxygen" }
+                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode())
+              }
+            }
+          } catch (e: Exception) {
+            logger.error(e) { "Error handling /api/wearable/oxygen" }
+            ctx.response().setStatusCode(400).end(JsonObject().put("error", e.message).encode())
+          }
+        }
+
+        // POST /api/wearable/respiratory
+        api.post("/wearable/respiratory").handler { ctx ->
+          try {
+            val body = ctx.bodyAsJson
+            val data = JsonObject()
+              .put("device_id", body.getString("device_id") ?: "unknown")
+              .put("timestamp", body.getLong("timestamp"))
+              .put("rate", body.getDouble("rate"))
+            vertx.eventBus().request<JsonObject>("insertWearableRespiratory", data) { ar ->
+              if (ar.succeeded()) {
+                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode())
+              } else {
+                logger.error(ar.cause()) { "Failed to store wearable respiratory" }
+                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode())
+              }
+            }
+          } catch (e: Exception) {
+            logger.error(e) { "Error handling /api/wearable/respiratory" }
+            ctx.response().setStatusCode(400).end(JsonObject().put("error", e.message).encode())
+          }
+        }
+
         // ---- GEOFENCE ALERT SYSTEM API ENDPOINTS ----
 
         // GET /api/participants - List all participants

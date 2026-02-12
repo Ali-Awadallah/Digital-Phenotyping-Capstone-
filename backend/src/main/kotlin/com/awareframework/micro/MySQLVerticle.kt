@@ -116,6 +116,15 @@ class MySQLVerticle : AbstractVerticle() {
         createScreenEventsTable()
         createNotificationsTable()
 
+        // ---- WEARABLE DATA TABLES ----
+        createWearableHeartRateTable()
+        createWearableStepsTable()
+        createWearableSleepTable()
+        createWearableBloodPressureTable()
+        createWearableWeightTable()
+        createWearableOxygenTable()
+        createWearableRespiratoryTable()
+
         // Get all participants
         eventBus.consumer<JsonObject>("getParticipants") { receivedMessage ->
           getAllParticipants().onComplete { response ->
@@ -296,6 +305,85 @@ class MySQLVerticle : AbstractVerticle() {
               receivedMessage.reply(response.result())
             } else {
               receivedMessage.fail(500, response.cause().message ?: "Failed to get battery")
+            }
+          }
+        }
+
+        // ---- WEARABLE DATA EVENT HANDLERS ----
+
+        eventBus.consumer<JsonObject>("insertWearableHeartRate") { receivedMessage ->
+          val data = receivedMessage.body()
+          insertWearableHeartRate(data).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(JsonObject().put("ok", true))
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to insert wearable heart rate")
+            }
+          }
+        }
+
+        eventBus.consumer<JsonObject>("insertWearableSteps") { receivedMessage ->
+          val data = receivedMessage.body()
+          insertWearableSteps(data).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(JsonObject().put("ok", true))
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to insert wearable steps")
+            }
+          }
+        }
+
+        eventBus.consumer<JsonObject>("insertWearableSleep") { receivedMessage ->
+          val data = receivedMessage.body()
+          insertWearableSleep(data).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(JsonObject().put("ok", true))
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to insert wearable sleep")
+            }
+          }
+        }
+
+        eventBus.consumer<JsonObject>("insertWearableBloodPressure") { receivedMessage ->
+          val data = receivedMessage.body()
+          insertWearableBloodPressure(data).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(JsonObject().put("ok", true))
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to insert wearable blood pressure")
+            }
+          }
+        }
+
+        eventBus.consumer<JsonObject>("insertWearableWeight") { receivedMessage ->
+          val data = receivedMessage.body()
+          insertWearableWeight(data).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(JsonObject().put("ok", true))
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to insert wearable weight")
+            }
+          }
+        }
+
+        eventBus.consumer<JsonObject>("insertWearableOxygen") { receivedMessage ->
+          val data = receivedMessage.body()
+          insertWearableOxygen(data).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(JsonObject().put("ok", true))
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to insert wearable oxygen")
+            }
+          }
+        }
+
+        eventBus.consumer<JsonObject>("insertWearableRespiratory") { receivedMessage ->
+          val data = receivedMessage.body()
+          insertWearableRespiratory(data).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(JsonObject().put("ok", true))
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to insert wearable respiratory")
             }
           }
         }
@@ -1159,6 +1247,480 @@ class MySQLVerticle : AbstractVerticle() {
           }
           .onFailure { e ->
             logger.error(e) { "Failed to get latest location" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  // ---- WEARABLE DATA TABLE CREATION ----
+
+  fun createWearableHeartRateTable(): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          CREATE TABLE IF NOT EXISTS `wearable_heart_rate` (
+            `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+            `device_id` VARCHAR(128) NOT NULL,
+            `timestamp` BIGINT NOT NULL,
+            `bpm` INT NOT NULL,
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX `idx_device` (`device_id`),
+            INDEX `idx_timestamp` (`timestamp`)
+          )
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Created wearable_heart_rate table" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to create wearable_heart_rate table" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun createWearableStepsTable(): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          CREATE TABLE IF NOT EXISTS `wearable_steps` (
+            `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+            `device_id` VARCHAR(128) NOT NULL,
+            `start_time` BIGINT NOT NULL,
+            `end_time` BIGINT NOT NULL,
+            `count` INT NOT NULL,
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX `idx_device` (`device_id`),
+            INDEX `idx_start_time` (`start_time`)
+          )
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Created wearable_steps table" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to create wearable_steps table" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun createWearableSleepTable(): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          CREATE TABLE IF NOT EXISTS `wearable_sleep` (
+            `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+            `device_id` VARCHAR(128) NOT NULL,
+            `start_time` BIGINT NOT NULL,
+            `end_time` BIGINT NOT NULL,
+            `title` VARCHAR(256) DEFAULT 'Sleep',
+            `notes` TEXT,
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX `idx_device` (`device_id`),
+            INDEX `idx_start_time` (`start_time`)
+          )
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Created wearable_sleep table" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to create wearable_sleep table" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun createWearableBloodPressureTable(): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          CREATE TABLE IF NOT EXISTS `wearable_blood_pressure` (
+            `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+            `device_id` VARCHAR(128) NOT NULL,
+            `timestamp` BIGINT NOT NULL,
+            `systolic` DOUBLE NOT NULL,
+            `diastolic` DOUBLE NOT NULL,
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX `idx_device` (`device_id`),
+            INDEX `idx_timestamp` (`timestamp`)
+          )
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Created wearable_blood_pressure table" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to create wearable_blood_pressure table" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun createWearableWeightTable(): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          CREATE TABLE IF NOT EXISTS `wearable_weight` (
+            `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+            `device_id` VARCHAR(128) NOT NULL,
+            `timestamp` BIGINT NOT NULL,
+            `weight_kg` DOUBLE NOT NULL,
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX `idx_device` (`device_id`),
+            INDEX `idx_timestamp` (`timestamp`)
+          )
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Created wearable_weight table" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to create wearable_weight table" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun createWearableOxygenTable(): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          CREATE TABLE IF NOT EXISTS `wearable_oxygen` (
+            `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+            `device_id` VARCHAR(128) NOT NULL,
+            `timestamp` BIGINT NOT NULL,
+            `percentage` DOUBLE NOT NULL,
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX `idx_device` (`device_id`),
+            INDEX `idx_timestamp` (`timestamp`)
+          )
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Created wearable_oxygen table" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to create wearable_oxygen table" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun createWearableRespiratoryTable(): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          CREATE TABLE IF NOT EXISTS `wearable_respiratory` (
+            `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+            `device_id` VARCHAR(128) NOT NULL,
+            `timestamp` BIGINT NOT NULL,
+            `rate` DOUBLE NOT NULL,
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX `idx_device` (`device_id`),
+            INDEX `idx_timestamp` (`timestamp`)
+          )
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Created wearable_respiratory table" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to create wearable_respiratory table" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  // ---- WEARABLE DATA INSERT FUNCTIONS ----
+
+  fun insertWearableHeartRate(data: JsonObject): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    val deviceId = data.getString("device_id")
+    val timestamp = data.getLong("timestamp")
+    val bpm = data.getInteger("bpm")
+
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          INSERT INTO wearable_heart_rate (device_id, timestamp, bpm)
+          VALUES ('$deviceId', $timestamp, $bpm)
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Inserted wearable heart rate for $deviceId: $bpm bpm" }
+            vertx.eventBus().publish("wearable.heartrate.update", data)
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to insert wearable heart rate" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun insertWearableSteps(data: JsonObject): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    val deviceId = data.getString("device_id")
+    val startTime = data.getLong("start_time")
+    val endTime = data.getLong("end_time")
+    val count = data.getInteger("count")
+
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          INSERT INTO wearable_steps (device_id, start_time, end_time, count)
+          VALUES ('$deviceId', $startTime, $endTime, $count)
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Inserted wearable steps for $deviceId: $count steps" }
+            vertx.eventBus().publish("wearable.steps.update", data)
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to insert wearable steps" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun insertWearableSleep(data: JsonObject): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    val deviceId = data.getString("device_id")
+    val startTime = data.getLong("start_time")
+    val endTime = data.getLong("end_time")
+    val title = StringEscapeUtils.escapeSql(data.getString("title", "Sleep"))
+    val notes = StringEscapeUtils.escapeSql(data.getString("notes", ""))
+
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          INSERT INTO wearable_sleep (device_id, start_time, end_time, title, notes)
+          VALUES ('$deviceId', $startTime, $endTime, '$title', '$notes')
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Inserted wearable sleep for $deviceId: $title" }
+            vertx.eventBus().publish("wearable.sleep.update", data)
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to insert wearable sleep" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun insertWearableBloodPressure(data: JsonObject): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    val deviceId = data.getString("device_id")
+    val timestamp = data.getLong("timestamp")
+    val systolic = data.getDouble("systolic")
+    val diastolic = data.getDouble("diastolic")
+
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          INSERT INTO wearable_blood_pressure (device_id, timestamp, systolic, diastolic)
+          VALUES ('$deviceId', $timestamp, $systolic, $diastolic)
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Inserted wearable blood pressure for $deviceId: $systolic/$diastolic" }
+            vertx.eventBus().publish("wearable.bloodpressure.update", data)
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to insert wearable blood pressure" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun insertWearableWeight(data: JsonObject): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    val deviceId = data.getString("device_id")
+    val timestamp = data.getLong("timestamp")
+    val weightKg = data.getDouble("weight_kg")
+
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          INSERT INTO wearable_weight (device_id, timestamp, weight_kg)
+          VALUES ('$deviceId', $timestamp, $weightKg)
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Inserted wearable weight for $deviceId: $weightKg kg" }
+            vertx.eventBus().publish("wearable.weight.update", data)
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to insert wearable weight" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun insertWearableOxygen(data: JsonObject): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    val deviceId = data.getString("device_id")
+    val timestamp = data.getLong("timestamp")
+    val percentage = data.getDouble("percentage")
+
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          INSERT INTO wearable_oxygen (device_id, timestamp, percentage)
+          VALUES ('$deviceId', $timestamp, $percentage)
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Inserted wearable oxygen for $deviceId: $percentage%" }
+            vertx.eventBus().publish("wearable.oxygen.update", data)
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to insert wearable oxygen" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun insertWearableRespiratory(data: JsonObject): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    val deviceId = data.getString("device_id")
+    val timestamp = data.getLong("timestamp")
+    val rate = data.getDouble("rate")
+
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          INSERT INTO wearable_respiratory (device_id, timestamp, rate)
+          VALUES ('$deviceId', $timestamp, $rate)
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Inserted wearable respiratory for $deviceId: $rate breaths/min" }
+            vertx.eventBus().publish("wearable.respiratory.update", data)
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to insert wearable respiratory" }
             promise.fail(e.message)
             connection.close()
           }

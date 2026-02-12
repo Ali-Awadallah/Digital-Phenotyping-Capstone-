@@ -29,9 +29,17 @@ import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.records.*
+import androidx.health.connect.client.request.ReadRecordsRequest
+import androidx.health.connect.client.time.TimeRangeFilter
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.io.File
 import java.io.FileWriter
+import java.time.Instant
 
 /**
  * SensorCollectorService - Android Foreground Service for continuous sensor data collection.
@@ -60,6 +68,10 @@ class SensorCollectorService : Service(), SensorEventListener {
         // Battery polling every 5 minutes (60 batch cycles of 5 seconds)
         private const val BATTERY_POLL_COUNT = 60
         
+        // Health Connect polling every 15 minutes (180 batch cycles of 5 seconds)
+        private const val HEALTH_CONNECT_POLL_COUNT = 180
+        private const val PREF_HC_LAST_SYNC = "hc_last_sync_timestamp"
+        
         const val PREF_SERVICE_ENABLED = "background_service_enabled"
         const val PREF_AUTO_START_ON_BOOT = "auto_start_on_boot"
         const val PREF_SERVICE_RUNNING = "service_currently_running"
@@ -81,6 +93,7 @@ class SensorCollectorService : Service(), SensorEventListener {
     
     private var isRunning = false
     private var batteryPollCounter = 0
+    private var healthConnectPollCounter = 0
     
     data class SensorReading(
         val ts: Long,
@@ -193,6 +206,11 @@ class SensorCollectorService : Service(), SensorEventListener {
             mainHandler?.postDelayed({
                 startBatchingLoop()
             }, 3000)
+            
+            // Initial Health Connect poll 30 seconds after start
+            mainHandler?.postDelayed({
+                pollHealthConnect()
+            }, 30000)
             
             // Save preferences - set both running state AND auto-start for boot
             try {
@@ -402,6 +420,13 @@ class SensorCollectorService : Service(), SensorEventListener {
                         if (batteryPollCounter >= BATTERY_POLL_COUNT) {
                             batteryPollCounter = 0
                             pollBattery()
+                        }
+                        
+                        // Poll Health Connect every 15 minutes
+                        healthConnectPollCounter++
+                        if (healthConnectPollCounter >= HEALTH_CONNECT_POLL_COUNT) {
+                            healthConnectPollCounter = 0
+                            pollHealthConnect()
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "Error in batch flush", e)
@@ -622,6 +647,176 @@ class SensorCollectorService : Service(), SensorEventListener {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error polling battery", e)
+        }
+    }
+
+    /**
+     * Poll Health Connect for wearable data and send to backend.
+     * Reads records since last sync timestamp to avoid duplicate sends.
+     */
+    private fun pollHealthConnect() {
+        try {
+            val status = HealthConnectClient.getSdkStatus(this)
+            if (status != HealthConnectClient.SDK_AVAILABLE) {
+                Log.d(TAG, "Health Connect not available, skipping wearable poll")
+                return
+            }
+
+            val client = HealthConnectClient.getOrCreate(this)
+            val prefs = getSharedPreferences("dp_prefs", Context.MODE_PRIVATE)
+            val lastSync = prefs.getLong(PREF_HC_LAST_SYNC, System.currentTimeMillis() - 15 * 60 * 1000)
+            val now = System.currentTimeMillis()
+
+            val startTime = Instant.ofEpochMilli(lastSync)
+            val endTime = Instant.ofEpochMilli(now)
+            val timeRange = TimeRangeFilter.between(startTime, endTime)
+
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    // Check if we have permissions
+                    val granted = client.permissionController.getGrantedPermissions()
+                    if (granted.isEmpty()) {
+                        Log.d(TAG, "No Health Connect permissions granted, skipping")
+                        return@launch
+                    }
+
+                    var totalRecordsSent = 0
+
+                    // Heart Rate
+                    try {
+                        val hrRecords = client.readRecords(
+                            ReadRecordsRequest(HeartRateRecord::class, timeRangeFilter = timeRange)
+                        )
+                        for (record in hrRecords.records) {
+                            for (sample in record.samples) {
+                                BackendAPIClient.sendWearableHeartRate(
+                                    this@SensorCollectorService,
+                                    sample.time.toEpochMilli(),
+                                    sample.beatsPerMinute.toInt()
+                                )
+                                totalRecordsSent++
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error reading heart rate", e)
+                    }
+
+                    // Steps
+                    try {
+                        val stepsRecords = client.readRecords(
+                            ReadRecordsRequest(StepsRecord::class, timeRangeFilter = timeRange)
+                        )
+                        for (record in stepsRecords.records) {
+                            BackendAPIClient.sendWearableSteps(
+                                this@SensorCollectorService,
+                                record.startTime.toEpochMilli(),
+                                record.endTime.toEpochMilli(),
+                                record.count.toInt()
+                            )
+                            totalRecordsSent++
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error reading steps", e)
+                    }
+
+                    // Sleep
+                    try {
+                        val sleepRecords = client.readRecords(
+                            ReadRecordsRequest(SleepSessionRecord::class, timeRangeFilter = timeRange)
+                        )
+                        for (record in sleepRecords.records) {
+                            BackendAPIClient.sendWearableSleep(
+                                this@SensorCollectorService,
+                                record.startTime.toEpochMilli(),
+                                record.endTime.toEpochMilli(),
+                                record.title ?: "Sleep",
+                                record.notes ?: ""
+                            )
+                            totalRecordsSent++
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error reading sleep", e)
+                    }
+
+                    // Blood Pressure
+                    try {
+                        val bpRecords = client.readRecords(
+                            ReadRecordsRequest(BloodPressureRecord::class, timeRangeFilter = timeRange)
+                        )
+                        for (record in bpRecords.records) {
+                            BackendAPIClient.sendWearableBloodPressure(
+                                this@SensorCollectorService,
+                                record.time.toEpochMilli(),
+                                record.systolic.inMillimetersOfMercury,
+                                record.diastolic.inMillimetersOfMercury
+                            )
+                            totalRecordsSent++
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error reading blood pressure", e)
+                    }
+
+                    // Weight
+                    try {
+                        val weightRecords = client.readRecords(
+                            ReadRecordsRequest(WeightRecord::class, timeRangeFilter = timeRange)
+                        )
+                        for (record in weightRecords.records) {
+                            BackendAPIClient.sendWearableWeight(
+                                this@SensorCollectorService,
+                                record.time.toEpochMilli(),
+                                record.weight.inKilograms
+                            )
+                            totalRecordsSent++
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error reading weight", e)
+                    }
+
+                    // Oxygen Saturation
+                    try {
+                        val oxygenRecords = client.readRecords(
+                            ReadRecordsRequest(OxygenSaturationRecord::class, timeRangeFilter = timeRange)
+                        )
+                        for (record in oxygenRecords.records) {
+                            BackendAPIClient.sendWearableOxygen(
+                                this@SensorCollectorService,
+                                record.time.toEpochMilli(),
+                                record.percentage.value
+                            )
+                            totalRecordsSent++
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error reading oxygen saturation", e)
+                    }
+
+                    // Respiratory Rate
+                    try {
+                        val respRecords = client.readRecords(
+                            ReadRecordsRequest(RespiratoryRateRecord::class, timeRangeFilter = timeRange)
+                        )
+                        for (record in respRecords.records) {
+                            BackendAPIClient.sendWearableRespiratory(
+                                this@SensorCollectorService,
+                                record.time.toEpochMilli(),
+                                record.rate
+                            )
+                            totalRecordsSent++
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error reading respiratory rate", e)
+                    }
+
+                    // Update last sync timestamp
+                    prefs.edit().putLong(PREF_HC_LAST_SYNC, now).apply()
+                    Log.d(TAG, "Health Connect sync complete: $totalRecordsSent records sent")
+
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in Health Connect poll", e)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error initializing Health Connect poll", e)
         }
     }
 

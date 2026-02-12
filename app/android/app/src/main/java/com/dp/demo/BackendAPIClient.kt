@@ -241,6 +241,108 @@ object BackendAPIClient {
     }
     
     /**
+     * Send wearable heart rate data to backend
+     */
+    fun sendWearableHeartRate(context: Context, timestamp: Long, bpm: Int) {
+        val deviceId = getDeviceId(context)
+        val apiBase = getApiBase(context)
+        val json = JSONObject().apply {
+            put("device_id", deviceId)
+            put("timestamp", timestamp)
+            put("bpm", bpm)
+        }
+        sendRequest("$apiBase/wearable/heart-rate", json)
+    }
+
+    /**
+     * Send wearable steps data to backend
+     */
+    fun sendWearableSteps(context: Context, startTime: Long, endTime: Long, count: Int) {
+        val deviceId = getDeviceId(context)
+        val apiBase = getApiBase(context)
+        val json = JSONObject().apply {
+            put("device_id", deviceId)
+            put("start_time", startTime)
+            put("end_time", endTime)
+            put("count", count)
+        }
+        sendRequest("$apiBase/wearable/steps", json)
+    }
+
+    /**
+     * Send wearable sleep data to backend
+     */
+    fun sendWearableSleep(context: Context, startTime: Long, endTime: Long, title: String, notes: String) {
+        val deviceId = getDeviceId(context)
+        val apiBase = getApiBase(context)
+        val json = JSONObject().apply {
+            put("device_id", deviceId)
+            put("start_time", startTime)
+            put("end_time", endTime)
+            put("title", title)
+            put("notes", notes)
+        }
+        sendRequest("$apiBase/wearable/sleep", json)
+    }
+
+    /**
+     * Send wearable blood pressure data to backend
+     */
+    fun sendWearableBloodPressure(context: Context, timestamp: Long, systolic: Double, diastolic: Double) {
+        val deviceId = getDeviceId(context)
+        val apiBase = getApiBase(context)
+        val json = JSONObject().apply {
+            put("device_id", deviceId)
+            put("timestamp", timestamp)
+            put("systolic", systolic)
+            put("diastolic", diastolic)
+        }
+        sendRequest("$apiBase/wearable/blood-pressure", json)
+    }
+
+    /**
+     * Send wearable weight data to backend
+     */
+    fun sendWearableWeight(context: Context, timestamp: Long, weightKg: Double) {
+        val deviceId = getDeviceId(context)
+        val apiBase = getApiBase(context)
+        val json = JSONObject().apply {
+            put("device_id", deviceId)
+            put("timestamp", timestamp)
+            put("weight_kg", weightKg)
+        }
+        sendRequest("$apiBase/wearable/weight", json)
+    }
+
+    /**
+     * Send wearable oxygen saturation data to backend
+     */
+    fun sendWearableOxygen(context: Context, timestamp: Long, percentage: Double) {
+        val deviceId = getDeviceId(context)
+        val apiBase = getApiBase(context)
+        val json = JSONObject().apply {
+            put("device_id", deviceId)
+            put("timestamp", timestamp)
+            put("percentage", percentage)
+        }
+        sendRequest("$apiBase/wearable/oxygen", json)
+    }
+
+    /**
+     * Send wearable respiratory rate data to backend
+     */
+    fun sendWearableRespiratory(context: Context, timestamp: Long, rate: Double) {
+        val deviceId = getDeviceId(context)
+        val apiBase = getApiBase(context)
+        val json = JSONObject().apply {
+            put("device_id", deviceId)
+            put("timestamp", timestamp)
+            put("rate", rate)
+        }
+        sendRequest("$apiBase/wearable/respiratory", json)
+    }
+
+    /**
      * Internal method to send HTTP POST request asynchronously
      */
     private fun sendRequest(url: String, json: JSONObject) {

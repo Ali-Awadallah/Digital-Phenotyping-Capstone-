@@ -157,6 +157,17 @@ export default function SettingsScreen() {
     }
   };
 
+  const handleSyncToBackend = async () => {
+    setHcLoading(true);
+    try {
+      const result = await HealthConnectService.syncToBackend();
+      Alert.alert("Sync Complete", result);
+    } catch (e) {
+      Alert.alert("Sync Error", e.message || "Failed to sync wearable data");
+    }
+    setHcLoading(false);
+  };
+
   return (
     <ScreenContainer>
       <View style={{ flexDirection: "row", alignItems: "center" }}>
@@ -300,6 +311,11 @@ export default function SettingsScreen() {
         <TouchableOpacity style={styles.hcButton} onPress={handleOpenSettings} disabled={hcLoading}>
           <MaterialIcons name="settings" size={20} color="#888" />
           <Text style={styles.hcButtonText}>Open Health Connect Settings</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={[styles.hcButton, { borderColor: '#34C759' }]} onPress={handleSyncToBackend} disabled={hcLoading}>
+          <MaterialIcons name="cloud-upload" size={20} color="#34C759" />
+          <Text style={[styles.hcButtonText, { color: '#34C759' }]}>Sync Wearable Data to Server</Text>
         </TouchableOpacity>
 
         {/* Permission Status Display */}
