@@ -1,5 +1,5 @@
 // src/sensors/SensorService.js
-import React, { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import { AppState } from "react-native";
 import * as Battery from "expo-battery";
 import { Gyroscope, Accelerometer, Pedometer } from "expo-sensors";
@@ -16,9 +16,9 @@ import {
   sendPedometer,
   sendLocation,
   sendNotification,
-} from "./awareAPI"; // <-- adjust path to your awareAPI.js
+} from "../../awareAPI"; // <-- adjust path to your awareAPI.js
 
-import BackgroundService from "./src/services/BackgroundService";
+import BackgroundService from "./BackgroundService";
 
 // Key for storing synced notification timestamps
 const SYNCED_NOTIFS_KEY = "synced_notification_timestamps";
@@ -95,7 +95,6 @@ export default function SensorService() {
     const gyroSub = Gyroscope.addListener(({ x, y, z }) => {
       const magnitude = Math.sqrt(x * x + y * y + z * z);
       const payload = { ts: Date.now(), x, y, z, magnitude };
-      console.log("Gyro reading:", payload);
       sendGyroscope(deviceIdRef.current, payload).catch((e) =>
         console.log("Gyro send error:", e)
       );
@@ -106,7 +105,6 @@ export default function SensorService() {
     const accelSub = Accelerometer.addListener(({ x, y, z }) => {
       const magnitude = Math.sqrt(x * x + y * y + z * z);
       const payload = { ts: Date.now(), x, y, z, magnitude };
-      console.log("Accel reading:", payload);
       sendAccelerometer(deviceIdRef.current, payload).catch((e) =>
         console.log("Accel send error:", e)
       );
@@ -149,7 +147,6 @@ export default function SensorService() {
             speed: speed ?? 0,
           };
 
-          console.log("Location reading:", payload);
           sendLocation(deviceIdRef.current, payload).catch((e) =>
             console.log("Location send error:", e)
           );

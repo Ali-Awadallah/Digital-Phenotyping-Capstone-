@@ -187,7 +187,7 @@ export default function SettingsScreen() {
 
       {/* Background Service Toggle */}
       <Text style={styles.sectionTitle}>Background Collection</Text>
-      <View style={[styles.sensorSection, { borderLeftColor: isBackgroundServiceRunning ? '#32D74B' : '#FF9500' }]}>
+      <View style={[styles.sensorSection, { borderColor: isBackgroundServiceRunning ? '#32d74b5d' : '#ff950067' }]}>
         <View style={styles.settingsRow}>
           <View style={styles.settingsLabelWrap}>
             <MaterialIcons
@@ -198,7 +198,7 @@ export default function SettingsScreen() {
             <View style={{ marginLeft: 8 }}>
               <Text style={styles.settingsLabel}>Background Service</Text>
               <Text style={styles.settingsSubLabel}>
-                {isBackgroundServiceRunning ? "Running - collecting data in background" : "Stopped - only collecting when app is open"}
+                {isBackgroundServiceRunning ? "Running - collecting data in background" : "Stopped - only collecting when app is running"}
               </Text>
             </View>
           </View>
@@ -214,14 +214,14 @@ export default function SettingsScreen() {
       <View style={styles.sensorSection}>
         <Row
           label="Location"
-          icon={<Icon name="location-outline" size={20} color="#15d6a9" />}
+          icon={<Icon name="location-outline" size={20} color="#15d6a9" style={{ marginRight: 8 }} />}
           value={collectLocation}
           onChange={setCollectLocation}
         />
         <Row
           label="Accelerometer"
           icon={
-            <Icon name="phone-portrait-outline" size={20} color="#FF9500" />
+            <Icon name="phone-portrait-outline" size={20} color="#FF9500" style={{ marginRight: 8 }} />
           }
           value={collectAccelerometer}
           onChange={setCollectAccelerometer}
@@ -229,56 +229,53 @@ export default function SettingsScreen() {
         <Row
           label="Gyroscope"
           icon={
-            <MaterialIcons name="screen-rotation" size={20} color="#32D74B" />
+            <MaterialIcons name="screen-rotation" size={20} color="#32D74B" style={{ marginRight: 8 }} />
           }
           value={collectGyroscope}
           onChange={setCollectGyroscope}
         />
         <Row
           label="Pedometer"
-          icon={<Icon name="walk-outline" size={20} color="#5856D6" />}
+          icon={<Icon name="footsteps-outline" size={20} color="#5856D6" style={{ marginRight: 8 }} />}
           value={collectPedometer}
           onChange={setCollectPedometer}
         />
         <Row
           label="Battery"
           icon={
-            <Icon name="battery-charging-outline" size={20} color="#00ad03ff" />
+            <Icon name="battery-charging-outline" size={20} color="#00ad03ff" style={{ marginRight: 8 }} />
           }
           value={collectBattery}
           onChange={setCollectBattery}
         />
         <Row
           label="Screen Events"
-          icon={<Icon name="power-outline" size={20} color="#a700adff" />}
+          icon={<Icon name="power-outline" size={20} color="#a700adff" style={{ marginRight: 8 }} />}
           value={collectScreenEvents}
           onChange={setCollectScreenEvents}
         />
         <Row
           label="Apps Usage"
-          icon={<Icon name="apps-outline" size={20} color="#15d6a9" />}
+          icon={<Icon name="apps-outline" size={20} color="#15d6a9" style={{ marginRight: 8 }} />}
           value={collectAppUsage}
           onChange={setCollectAppUsage}
         />
         <Row
           label="Notifications"
-          icon={
-            <Icon
-              name="notifications-outline"
-              size={20}
-              color="#f5a623"
-            />
-          }
+          icon={<Icon name="notifications-outline" size={20} color="#f5a623" style={{ marginRight: 8 }} />}
           value={collectNotifications}
           onChange={setCollectNotifications}
         />
       </View>
 
       {/* Health Connect / Wearables Section */}
-      <Text style={styles.sectionTitle}>Wearables (Health Connect)</Text>
-      <View style={[styles.sensorSection, { borderLeftColor: '#E91E63' }]}>
+      <View style={{ flexDirection: "row", alignItems: "center" }}>
+        <MaterialIcons name="watch" size={20} color="#E91E63" />
+        <Text style={styles.sectionTitle}>Wearables (Health Connect)</Text>
+      </View>
+      <View style={[styles.sensorSection, { borderColor: '#e91e6267' }]}>
         <Text style={styles.hcDescription}>
-          Connect to smartwatches and fitness trackers via Health Connect to collect heart rate, steps, sleep, and more. This is optional.
+          Connect to smartwatches and fitness trackers via Health Connect to collect heart rate, steps, sleep, and more.
         </Text>
 
         {hcLoading && (
@@ -300,36 +297,18 @@ export default function SettingsScreen() {
 
         <TouchableOpacity style={styles.hcButton} onPress={handleRequestPermissions} disabled={hcLoading}>
           <MaterialIcons name="security" size={20} color="#FF9500" />
-          <Text style={styles.hcButtonText}>Request Permissions</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.hcButton} onPress={handleFetchData} disabled={hcLoading}>
-          <MaterialIcons name="download" size={20} color="#5856D6" />
-          <Text style={styles.hcButtonText}>Fetch Last 24h Data</Text>
+          <Text style={styles.hcButtonText}>Grant Permissions</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.hcButton} onPress={handleOpenSettings} disabled={hcLoading}>
           <MaterialIcons name="settings" size={20} color="#888" />
-          <Text style={styles.hcButtonText}>Open Health Connect Settings</Text>
+          <Text style={styles.hcButtonText}>Open Health Connect</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={[styles.hcButton, { borderColor: '#34C759' }]} onPress={handleSyncToBackend} disabled={hcLoading}>
           <MaterialIcons name="cloud-upload" size={20} color="#34C759" />
-          <Text style={[styles.hcButtonText, { color: '#34C759' }]}>Sync Wearable Data to Server</Text>
+          <Text style={[styles.hcButtonText, { color: '#34C759' }]}>Sync Wearable Data</Text>
         </TouchableOpacity>
-
-        {/* Permission Status Display */}
-        {hcPermissions && (
-          <View style={styles.hcPermGrid}>
-            <Text style={styles.hcPermTitle}>Permission Status:</Text>
-            {Object.entries(hcPermissions).map(([key, granted]) => (
-              <View key={key} style={styles.hcPermRow}>
-                <Text style={styles.hcPermIcon}>{granted ? '✅' : '❌'}</Text>
-                <Text style={styles.hcPermLabel}>{key}</Text>
-              </View>
-            ))}
-          </View>
-        )}
       </View>
     </ScreenContainer>
   );
@@ -391,8 +370,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 16,
     marginBottom: 36,
-    borderLeftWidth: 4,
-    borderLeftColor: "#15d6a9",
+    borderWidth: 1,
+    borderColor: "#15d6a96e",
     elevation: 3,
   },
   settingsRow: {
@@ -421,6 +400,7 @@ const styles = StyleSheet.create({
     fontFamily: "Archivo-Medium",
     marginTop: 16,
     marginBottom: 8,
+    marginLeft: 8,
   },
   // Health Connect styles
   hcDescription: {

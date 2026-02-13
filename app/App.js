@@ -4,7 +4,7 @@ import { AppProvider } from "./src/context/AppContext";
 import RootNavigator from "./src/navigation/RootNavigator";
 import { useFonts, Archivo_400Regular, Archivo_500Medium, Archivo_600SemiBold } from '@expo-google-fonts/archivo'
 import { setCustomText } from 'react-native-global-props'
-import SensorService from "./SensorsService.js"; //
+import SensorService from "./src/services/SensorsService.js";
 import { AppState } from "react-native";
 
 

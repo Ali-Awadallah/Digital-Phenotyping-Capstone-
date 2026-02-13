@@ -12,6 +12,7 @@ import SensorsScreen from "../screens/SensorsScreen";
 import SettingsScreen from "../screens/SettingsScreen";
 import ProfileScreen from "../screens/ProfileScreen";
 import AlertsScreen from "../screens/AlertsScreen";
+import PermissionsScreen from "../screens/PermissionsScreen";
 import NotificationPing from "../components/NotificationPing";
 import { useApp } from "../context/AppContext";
 
@@ -32,8 +33,8 @@ function MyTabBar({ state, descriptors, navigation }) {
           options.tabBarLabel !== undefined
             ? options.tabBarLabel
             : options.title !== undefined
-            ? options.title
-            : route.name;
+              ? options.title
+              : route.name;
 
         const isFocused = state.index === index;
         const isCenter = route.name === "Home";
@@ -41,12 +42,12 @@ function MyTabBar({ state, descriptors, navigation }) {
           route.name === "Home"
             ? "home-outline"
             : route.name === "Sensors"
-            ? "analytics-outline"
-            : route.name === "Settings"
-            ? "settings-outline"
-            : route.name === "Profile"
-            ? "person-outline"
-            : "alert-circle-outline";
+              ? "analytics-outline"
+              : route.name === "Settings"
+                ? "settings-outline"
+                : route.name === "Profile"
+                  ? "person-outline"
+                  : "alert-circle-outline";
         const showAlertPing =
           route.name === "Alerts" && alerts && alerts.length > 0;
 
@@ -77,8 +78,8 @@ function MyTabBar({ state, descriptors, navigation }) {
                       ? "#FFF"
                       : "#15d6a9"
                     : isCenter
-                    ? "#222d3aff"
-                    : "#b0b0b0ff"
+                      ? "#222d3aff"
+                      : "#b0b0b0ff"
                 }
               />
               {!isCenter && showAlertPing ? <NotificationPing /> : null}
@@ -127,6 +128,7 @@ export default function RootNavigator() {
           fullScreenGestureEnabled: true,
         }}
       >
+        <Stack.Screen name="Permissions" component={PermissionsScreen} />
         <Stack.Screen name="Root" component={Tabs} />
       </Stack.Navigator>
     </NavigationContainer>

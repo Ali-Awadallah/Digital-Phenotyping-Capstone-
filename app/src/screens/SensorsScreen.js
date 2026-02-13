@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import { useEffect } from "react";
 import {
   View,
   Text,
@@ -219,7 +219,7 @@ export default function SensorsScreen() {
       {/* Pedometer */}
       <View style={styles.sensorSection}>
         <View style={styles.sensorHeader}>
-          <Icon name="walk-outline" size={24} color="#5856D6" />
+          <Icon name="footsteps-outline" size={24} color="#5856D6" />
           <Text style={styles.sensorTitle}>Pedometer</Text>
           <View
             style={[
@@ -555,8 +555,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 16,
     marginBottom: 36,
-    borderLeftWidth: 4,
-    borderLeftColor: "#15d6a9",
     elevation: 3,
   },
   sensorHeader: {

@@ -51,7 +51,7 @@ export function AppProvider({ children }) {
 
   // Background service state
   const [isBackgroundServiceRunning, setIsBackgroundServiceRunning] = useState(false);
-  const [backgroundServiceEnabled, setBackgroundServiceEnabled] = useState(false);
+  const [backgroundServiceEnabled, setBackgroundServiceEnabled] = useState(true);
 
   // Load/save preferences
   const [prefsLoaded, setPrefsLoaded] = useState(false);
