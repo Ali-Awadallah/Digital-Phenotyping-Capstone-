@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   # MySQL Database
   mysql:
@@ -11,7 +9,7 @@ services:
       MYSQL_USER: aware_user
       MYSQL_PASSWORD: password
     ports:
-      - "3307:3306"
+      - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
@@ -29,8 +27,8 @@ services:
       dockerfile: Dockerfile
     container_name: dp-backend
     ports:
-      - "8090:8080"
-      - "8091:8081"
+      - "8080"
+      - "8081"
     environment:
       DATABASE_HOST: mysql
     depends_on:
@@ -42,25 +40,32 @@ services:
       - dp-network
     restart: unless-stopped
 
-  # Accelerometer AI anomaly service
-  accel_ai:
+
+  # Signature engine service (hourly features + signature alerts)
+  signature_engine:
     build:
       context: .
       dockerfile: Dockerfile.ai
-    container_name: accel-ai-service
+    container_name: signature-engine-service
     environment:
-      DB_HOST: mysql
+      DB_HOST: host.docker.internal
       DB_PORT: "3306"
       DB_NAME: aware_db
       DB_USER: aware_user
       DB_PASSWORD: password
       PYTHONUNBUFFERED: "1"
+      LOOP_INTERVAL_SEC: "60"
     depends_on:
       mysql:
         condition: service_healthy
+      backend:
+        condition: service_started
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - dp-network
     restart: unless-stopped
+    command: ["python", "-u", "/app/build_hourly_features_and_alerts.py", "--loop"]
 
 volumes:
   mysql_data:

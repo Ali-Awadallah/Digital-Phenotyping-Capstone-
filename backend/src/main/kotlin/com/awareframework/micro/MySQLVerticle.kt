@@ -20,6 +20,7 @@ import io.vertx.sqlclient.PoolOptions
 import io.vertx.sqlclient.SqlClient
 import java.util.stream.Collectors
 import java.util.stream.StreamSupport
+import kotlin.math.min
 
 class MySQLVerticle : AbstractVerticle() {
 
@@ -50,11 +51,11 @@ class MySQLVerticle : AbstractVerticle() {
 
         // https://vertx.io/docs/4.3.3/apidocs/io/vertx/mysqlclient/MySQLConnectOptions.html
         val connectOptions = MySQLConnectOptions()
-          .setHost(serverConfig.getString("database_host"))
-          .setPort(serverConfig.getInteger("database_port"))
-          .setDatabase(serverConfig.getString("database_name"))
-          .setUser(serverConfig.getString("database_user"))
-          .setPassword(serverConfig.getString("database_pwd"))
+          .setHost(System.getenv("DATABASE_HOST") ?: serverConfig.getString("database_host"))
+          .setPort(System.getenv("DATABASE_PORT")?.toIntOrNull() ?: serverConfig.getInteger("database_port"))
+          .setDatabase(System.getenv("DATABASE_NAME") ?: serverConfig.getString("database_name"))
+          .setUser(System.getenv("DATABASE_USER") ?: serverConfig.getString("database_user"))
+          .setPassword(System.getenv("DATABASE_PASSWORD") ?: serverConfig.getString("database_pwd"))
         setDatabaseSslMode(serverConfig, connectOptions)
 
         val poolOptions = PoolOptions().setMaxSize(5)
@@ -108,15 +109,18 @@ class MySQLVerticle : AbstractVerticle() {
         createParticipantsTable()
         createRedZonesTable()
         createGeofenceAlertsTable()
+        createSignatureAlertsTable()
 
         // ---- SENSOR DATA TABLES ----
         
         // Create sensor data tables on startup
+        createAccelerometerTable()
+        createGyroscopeTable()
+        createLocationTable()
         createBatteryReadingsTable()
         createScreenEventsTable()
         createNotificationsTable()
-        createAccelAlertsTable()
-        createAccelAiStateTable()
+
 
         // Get all participants
         eventBus.consumer<JsonObject>("getParticipants") { receivedMessage ->
@@ -226,30 +230,7 @@ class MySQLVerticle : AbstractVerticle() {
           }
         }
 
-        // Get accelerometer anomaly alerts
-        eventBus.consumer<JsonObject>("getAccelAlerts") { receivedMessage ->
-          val activeOnly = receivedMessage.body().getBoolean("active_only", false)
-          getAccelAlerts(activeOnly).onComplete { response ->
-            if (response.succeeded()) {
-              receivedMessage.reply(response.result())
-            } else {
-              receivedMessage.fail(500, response.cause().message ?: "Failed to get accel alerts")
-            }
-          }
-        }
 
-        // Acknowledge accelerometer anomaly alert
-        eventBus.consumer<JsonObject>("acknowledgeAccelAlert") { receivedMessage ->
-          val alertId = receivedMessage.body().getInteger("alert_id")
-          val acknowledgedBy = receivedMessage.body().getString("acknowledged_by", "admin")
-          acknowledgeAccelAlert(alertId, acknowledgedBy).onComplete { response ->
-            if (response.succeeded()) {
-              receivedMessage.reply(JsonObject().put("ok", true))
-            } else {
-              receivedMessage.fail(500, response.cause().message ?: "Failed to acknowledge accel alert")
-            }
-          }
-        }
 
         // Check for recent alert (duplicate prevention)
         eventBus.consumer<JsonObject>("checkRecentAlert") { receivedMessage ->
@@ -273,6 +254,34 @@ class MySQLVerticle : AbstractVerticle() {
               receivedMessage.reply(response.result())
             } else {
               receivedMessage.fail(500, response.cause().message ?: "Failed to get location")
+            }
+          }
+        }
+
+        // ---- SIGNATURE ALERT HANDLERS ----
+
+        // Get signature alerts
+        eventBus.consumer<JsonObject>("getSignatureAlerts") { receivedMessage ->
+          val activeOnly = receivedMessage.body().getBoolean("active_only", false)
+          val limit = receivedMessage.body().getInteger("limit", 200)
+          getSignatureAlerts(activeOnly, limit).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(response.result())
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to get signature alerts")
+            }
+          }
+        }
+
+        // Acknowledge signature alert
+        eventBus.consumer<JsonObject>("acknowledgeSignatureAlert") { receivedMessage ->
+          val id = receivedMessage.body().getLong("id")
+          val acknowledgedBy = receivedMessage.body().getString("acknowledged_by", "admin")
+          acknowledgeSignatureAlert(id, acknowledgedBy).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(JsonObject().put("ok", true))
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to acknowledge signature alert")
             }
           }
         }
@@ -311,6 +320,42 @@ class MySQLVerticle : AbstractVerticle() {
               receivedMessage.reply(JsonObject().put("ok", true))
             } else {
               receivedMessage.fail(500, response.cause().message ?: "Failed to insert notification")
+            }
+          }
+        }
+
+        // Insert accelerometer reading
+        eventBus.consumer<JsonObject>("insertAccelerometer") { receivedMessage ->
+          val data = receivedMessage.body()
+          insertAccelerometer(data).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(JsonObject().put("ok", true))
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to insert accelerometer")
+            }
+          }
+        }
+
+        // Insert gyroscope reading
+        eventBus.consumer<JsonObject>("insertGyroscope") { receivedMessage ->
+          val data = receivedMessage.body()
+          insertGyroscope(data).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(JsonObject().put("ok", true))
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to insert gyroscope")
+            }
+          }
+        }
+
+        // Insert location reading
+        eventBus.consumer<JsonObject>("insertLocation") { receivedMessage ->
+          val data = receivedMessage.body()
+          insertLocation(data).onComplete { response ->
+            if (response.succeeded()) {
+              receivedMessage.reply(JsonObject().put("ok", true))
+            } else {
+              receivedMessage.fail(500, response.cause().message ?: "Failed to insert location")
             }
           }
         }
@@ -604,6 +649,56 @@ class MySQLVerticle : AbstractVerticle() {
     return promise.future()
   }
 
+  /**
+   * Create signature_alerts table for storing signature-based anomaly alerts
+   */
+  fun createSignatureAlertsTable(): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          CREATE TABLE IF NOT EXISTS `signature_alerts` (
+            `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+            `participant_id` VARCHAR(36) NOT NULL,
+            `hour_start` DATETIME NOT NULL,
+            `alert_code` VARCHAR(32) NOT NULL,
+            `alert_name` VARCHAR(255) NULL,
+            `severity` VARCHAR(16) NULL,
+            `score` DOUBLE NULL,
+            `baseline_ref` VARCHAR(64) NULL,
+            `top_features_json` JSON NULL,
+            `explanation` TEXT NULL,
+            `status` VARCHAR(32) DEFAULT 'active',
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            `acknowledged_at` TIMESTAMP NULL,
+            `acknowledged_by` VARCHAR(100) NULL,
+            UNIQUE KEY `uniq_alert` (`participant_id`, `hour_start`, `alert_code`),
+            INDEX `idx_sa_participant` (`participant_id`),
+            INDEX `idx_sa_created` (`created_at`),
+            INDEX `idx_sa_status` (`status`),
+            INDEX `idx_sa_ack` (`acknowledged_at`)
+          )
+        """.trimIndent()
+
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Created signature_alerts table (if missing)" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to create signature_alerts table" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
   // ---- SENSOR DATA TABLE CREATION ----
 
   fun createBatteryReadingsTable(): Future<Boolean> {
@@ -650,8 +745,9 @@ class MySQLVerticle : AbstractVerticle() {
           CREATE TABLE IF NOT EXISTS `screen_events` (
             `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
             `device_id` VARCHAR(128) NOT NULL,
-            `state` VARCHAR(10) NOT NULL,
             `timestamp` BIGINT NOT NULL,
+            `utc_time` DATETIME NULL,
+            `event` VARCHAR(50) NOT NULL,
             `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             INDEX `idx_device` (`device_id`),
             INDEX `idx_timestamp` (`timestamp`)
@@ -716,87 +812,7 @@ class MySQLVerticle : AbstractVerticle() {
     return promise.future()
   }
 
-  fun createAccelAlertsTable(): Future<Boolean> {
-    val promise = Promise.promise<Boolean>()
-    sqlClient.getConnection { connectionResult ->
-        if (connectionResult.succeeded()) {
-            val connection = connectionResult.result()
-            val query = """
-                CREATE TABLE IF NOT EXISTS `accel_alerts` (
-                    `alert_id` BIGINT AUTO_INCREMENT PRIMARY KEY,
-                    `participant_id` VARCHAR(36) NOT NULL,
-                    `triggered_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    `anomaly_type` VARCHAR(50) NOT NULL,
-                    `anomaly_score` DOUBLE NOT NULL,
-                    `acknowledged` TINYINT(1) DEFAULT 0,
-                    `acknowledged_by` VARCHAR(100) NULL,
-                    `acknowledged_at` TIMESTAMP NULL,
-                    `metadata` JSON NULL,
-                    INDEX `idx_participant` (`participant_id`),
-                    INDEX `idx_acknowledged` (`acknowledged`),
-                    INDEX `idx_triggered` (`triggered_at`)
-                )
-            """.trimIndent()
 
-            connection.query(query).execute()
-                .onSuccess {
-                    logger.info { "Created accel_alerts table" }
-                    promise.complete(true)
-                    connection.close()
-                }
-                .onFailure { e ->
-                    logger.error(e) { "Failed to create accel_alerts table" }
-                    promise.fail(e.message)
-                    connection.close()
-                }
-        } else {
-            promise.fail(connectionResult.cause().message)
-        }
-    }
-    return promise.future()
-}
-
-fun createAccelAiStateTable(): Future<Boolean> {
-    val promise = Promise.promise<Boolean>()
-    sqlClient.getConnection { connectionResult ->
-        if (connectionResult.succeeded()) {
-            val connection = connectionResult.result()
-            val query = """
-                CREATE TABLE IF NOT EXISTS `accel_ai_state` (
-                    `state_id` INT PRIMARY KEY,
-                    `last_end_time_str` VARCHAR(64) NULL
-                )
-            """.trimIndent()
-
-            connection.query(query).execute()
-                .onSuccess {
-                    // Ensure the singleton row exists
-                    connection.query("INSERT IGNORE INTO accel_ai_state (state_id, last_end_time_str) VALUES (1, NULL)")
-                        .execute()
-                        .onSuccess {
-                            logger.info { "Created accel_ai_state table" }
-                            promise.complete(true)
-                            connection.close()
-                        }
-                        .onFailure { e ->
-                            logger.error(e) { "Failed to seed accel_ai_state row" }
-                            promise.fail(e.message)
-                            connection.close()
-                        }
-                }
-                .onFailure { e ->
-                    logger.error(e) { "Failed to create accel_ai_state table" }
-                    promise.fail(e.message)
-                    connection.close()
-                }
-        } else {
-            promise.fail(connectionResult.cause().message)
-        }
-    }
-    return promise.future()
-}
-
-  
 
   // ---- SENSOR DATA INSERT FUNCTIONS ----
 
@@ -844,24 +860,261 @@ fun createAccelAiStateTable(): Future<Boolean> {
   fun insertScreenEvent(data: JsonObject): Future<Boolean> {
     val promise = Promise.promise<Boolean>()
     val deviceId = data.getString("device_id")
-    val state = data.getString("state")
+    val rawState = data.getString("state") ?: data.getString("event") ?: "UNKNOWN"
+    val event = when (rawState.uppercase()) {
+      "ON" -> "Screen turned on"
+      "OFF" -> "Screen turned off"
+      else -> rawState
+    }
     val timestamp = data.getLong("timestamp")
+    val utcTime = java.time.Instant.ofEpochMilli(timestamp)
+      .atZone(java.time.ZoneOffset.UTC)
+      .toLocalDateTime()
+      .toString()
     
     sqlClient.getConnection { connectionResult ->
       if (connectionResult.succeeded()) {
         val connection = connectionResult.result()
         val query = """
-          INSERT INTO screen_events (device_id, state, timestamp)
-          VALUES ('$deviceId', '$state', $timestamp)
+          INSERT INTO `screen_events` (`device_id`, `timestamp`, `utc_time`, `event`)
+          VALUES ('$deviceId', $timestamp, '$utcTime', '$event')
         """.trimIndent()
         connection.query(query).execute()
           .onSuccess {
-            logger.info { "Inserted screen event for $deviceId: $state" }
+            logger.info { "Inserted screen event for $deviceId: $event" }
             promise.complete(true)
             connection.close()
           }
           .onFailure { e ->
             logger.error(e) { "Failed to insert screen event" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  // ---- DEDICATED SENSOR TABLE CREATION ----
+
+  fun createAccelerometerTable(): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          CREATE TABLE IF NOT EXISTS `accelerometer` (
+            `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+            `device_id` VARCHAR(128) NOT NULL,
+            `timestamp` BIGINT NOT NULL,
+            `utc_time` DATETIME NULL,
+            `x` DOUBLE NULL,
+            `y` DOUBLE NULL,
+            `z` DOUBLE NULL,
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX `idx_device` (`device_id`),
+            INDEX `idx_timestamp` (`timestamp`)
+          )
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Created accelerometer table" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to create accelerometer table" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun createGyroscopeTable(): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          CREATE TABLE IF NOT EXISTS `gyroscope` (
+            `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+            `device_id` VARCHAR(128) NOT NULL,
+            `timestamp` BIGINT NOT NULL,
+            `utc_time` DATETIME NULL,
+            `x` DOUBLE NULL,
+            `y` DOUBLE NULL,
+            `z` DOUBLE NULL,
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX `idx_device` (`device_id`),
+            INDEX `idx_timestamp` (`timestamp`)
+          )
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Created gyroscope table" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to create gyroscope table" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun createLocationTable(): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          CREATE TABLE IF NOT EXISTS `location` (
+            `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+            `device_id` VARCHAR(128) NOT NULL,
+            `timestamp` BIGINT NOT NULL,
+            `utc_time` DATETIME NULL,
+            `latitude` DOUBLE NULL,
+            `longitude` DOUBLE NULL,
+            `altitude` DOUBLE NULL,
+            `accuracy` DOUBLE NULL,
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX `idx_device` (`device_id`),
+            INDEX `idx_timestamp` (`timestamp`)
+          )
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Created location table" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to create location table" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  // ---- DEDICATED SENSOR INSERT METHODS ----
+
+  fun insertAccelerometer(data: JsonObject): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    val deviceId = data.getString("device_id")
+    val timestamp = data.getLong("timestamp")
+    val x = data.getDouble("x")
+    val y = data.getDouble("y")
+    val z = data.getDouble("z")
+    val utcTime = java.time.Instant.ofEpochMilli(timestamp)
+      .atZone(java.time.ZoneOffset.UTC)
+      .toLocalDateTime()
+      .toString()
+
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          INSERT INTO `accelerometer` (`device_id`, `timestamp`, `utc_time`, `x`, `y`, `z`)
+          VALUES ('$deviceId', $timestamp, '$utcTime', $x, $y, $z)
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Inserted accelerometer for $deviceId: x=$x y=$y z=$z" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to insert accelerometer" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun insertGyroscope(data: JsonObject): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    val deviceId = data.getString("device_id")
+    val timestamp = data.getLong("timestamp")
+    val x = data.getDouble("x")
+    val y = data.getDouble("y")
+    val z = data.getDouble("z")
+    val utcTime = java.time.Instant.ofEpochMilli(timestamp)
+      .atZone(java.time.ZoneOffset.UTC)
+      .toLocalDateTime()
+      .toString()
+
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          INSERT INTO `gyroscope` (`device_id`, `timestamp`, `utc_time`, `x`, `y`, `z`)
+          VALUES ('$deviceId', $timestamp, '$utcTime', $x, $y, $z)
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Inserted gyroscope for $deviceId: x=$x y=$y z=$z" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to insert gyroscope" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun insertLocation(data: JsonObject): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    val deviceId = data.getString("device_id")
+    val timestamp = data.getLong("timestamp")
+    val latitude = data.getDouble("latitude")
+    val longitude = data.getDouble("longitude")
+    val altitude = data.getDouble("altitude")
+    val accuracy = data.getDouble("accuracy")
+    val utcTime = java.time.Instant.ofEpochMilli(timestamp)
+      .atZone(java.time.ZoneOffset.UTC)
+      .toLocalDateTime()
+      .toString()
+
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val query = """
+          INSERT INTO `location` (`device_id`, `timestamp`, `utc_time`, `latitude`, `longitude`, `altitude`, `accuracy`)
+          VALUES ('$deviceId', $timestamp, '$utcTime', $latitude, $longitude, $altitude, $accuracy)
+        """.trimIndent()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Inserted location for $deviceId: lat=$latitude lon=$longitude" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to insert location" }
             promise.fail(e.message)
             connection.close()
           }
@@ -1228,80 +1481,8 @@ fun createAccelAiStateTable(): Future<Boolean> {
     return promise.future()
   }
 
-fun getAccelAlerts(activeOnly: Boolean): Future<JsonArray> {
-    val promise = Promise.promise<JsonArray>()
-    sqlClient.getConnection { connectionResult ->
-        if (connectionResult.succeeded()) {
-            val connection = connectionResult.result()
-            val whereClause = if (activeOnly) "WHERE acknowledged = 0" else ""
-            val query = """
-                SELECT
-                    alert_id,
-                    participant_id,
-                    triggered_at,
-                    anomaly_type,
-                    anomaly_score,
-                    acknowledged,
-                    acknowledged_by,
-                    acknowledged_at,
-                    metadata
-                FROM accel_alerts
-                $whereClause
-                ORDER BY triggered_at DESC
-                LIMIT 200
-            """.trimIndent()
 
-            connection.query(query).execute()
-                .onSuccess { rows ->
-                    val result = JsonArray(
-                        StreamSupport.stream(rows.spliterator(), false)
-                            .map { row -> row.toJson() }
-                            .collect(Collectors.toList())
-                    )
-                    promise.complete(result)
-                    connection.close()
-                }
-                .onFailure { e ->
-                    logger.error(e) { "Failed to get accel alerts" }
-                    promise.fail(e.message)
-                    connection.close()
-                }
-        } else {
-            promise.fail(connectionResult.cause().message)
-        }
-    }
-    return promise.future()
-}
 
-fun acknowledgeAccelAlert(alertId: Int, acknowledgedBy: String): Future<Boolean> {
-    val promise = Promise.promise<Boolean>()
-    sqlClient.getConnection { connectionResult ->
-        if (connectionResult.succeeded()) {
-            val connection = connectionResult.result()
-            val safeBy = acknowledgedBy.replace("'", "''")
-            val query = """
-                UPDATE accel_alerts
-                SET acknowledged = 1, acknowledged_by = '$safeBy', acknowledged_at = NOW()
-                WHERE alert_id = $alertId
-            """.trimIndent()
-
-            connection.query(query).execute()
-                .onSuccess {
-                    logger.info { "Acknowledged accel alert: $alertId by $safeBy" }
-                    promise.complete(true)
-                    connection.close()
-                }
-                .onFailure { e ->
-                    logger.error(e) { "Failed to acknowledge accel alert" }
-                    promise.fail(e.message)
-                    connection.close()
-                }
-        } else {
-            promise.fail(connectionResult.cause().message)
-        }
-    }
-    return promise.future()
-}
   fun checkRecentAlert(participantId: String, zoneId: String, windowMinutes: Int): Future<Boolean> {
     val promise = Promise.promise<Boolean>()
     sqlClient.getConnection { connectionResult ->
@@ -1336,7 +1517,7 @@ fun acknowledgeAccelAlert(alertId: Int, acknowledgedBy: String): Future<Boolean>
     sqlClient.getConnection { connectionResult ->
       if (connectionResult.succeeded()) {
         val connection = connectionResult.result()
-        connection.query("SELECT * FROM location WHERE device_id = '$deviceId' ORDER BY timestamp DESC LIMIT 1").execute()
+        connection.query("SELECT id, device_id, timestamp, utc_time, latitude, longitude, altitude, accuracy, created_at FROM location WHERE device_id = '$deviceId' ORDER BY timestamp DESC LIMIT 1").execute()
           .onSuccess { rows ->
             val result = rows.firstOrNull()?.toJson()
             promise.complete(result)
@@ -1344,6 +1525,88 @@ fun acknowledgeAccelAlert(alertId: Int, acknowledgedBy: String): Future<Boolean>
           }
           .onFailure { e ->
             logger.error(e) { "Failed to get latest location" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  // ---- SIGNATURE ALERT OPERATIONS ----
+
+  /**
+   * Get signature alerts, optionally only active (unacknowledged) ones
+   */
+  fun getSignatureAlerts(activeOnly: Boolean, limit: Int): Future<JsonArray> {
+    val promise = Promise.promise<JsonArray>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val whereClause = if (activeOnly) "WHERE acknowledged_at IS NULL" else ""
+        val safeLimit = if (limit <= 0) 200 else minOf(limit, 1000)
+
+        val query = """
+          SELECT
+            id, participant_id, hour_start, alert_code, alert_name,
+            severity, score, baseline_ref, top_features_json, explanation,
+            status, created_at, acknowledged_at, acknowledged_by
+          FROM signature_alerts
+          $whereClause
+          ORDER BY created_at DESC
+          LIMIT $safeLimit
+        """.trimIndent()
+
+        connection.query(query).execute()
+          .onSuccess { rows ->
+            val result = JsonArray(
+              StreamSupport.stream(rows.spliterator(), false)
+                .map { row -> row.toJson() }
+                .collect(Collectors.toList())
+            )
+            promise.complete(result)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to get signature alerts" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  /**
+   * Acknowledge a signature alert
+   */
+  fun acknowledgeSignatureAlert(id: Long, acknowledgedBy: String): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        val safeBy = acknowledgedBy.replace("'", "''")
+
+        val query = """
+          UPDATE signature_alerts
+          SET acknowledged_at = NOW(),
+              acknowledged_by = '$safeBy',
+              status = 'acknowledged'
+          WHERE id = $id AND acknowledged_at IS NULL
+        """.trimIndent()
+
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Acknowledged signature alert: $id by $safeBy" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to acknowledge signature alert" }
             promise.fail(e.message)
             connection.close()
           }

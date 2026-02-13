@@ -16,10 +16,13 @@ RUN gradle dependencies --no-daemon
 
 # Copy source code
 COPY src ./src
-COPY LICENSE ./
+
+# Cache bust to force fresh snapshot allocation
+ARG CACHE_BUST=1
+RUN echo "Building with cache bust: ${CACHE_BUST}"
 
 # Build the fat JAR
-RUN gradle shadowJar --no-daemon
+RUN gradle shadowJar --no-daemon --info
 
 # Stage 2: Run the application
 FROM eclipse-temurin:17-jre-alpine
