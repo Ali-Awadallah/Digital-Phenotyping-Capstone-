@@ -11,7 +11,8 @@
         refreshInterval: null,
         alerts: [],
         participants: [],
-        socket: null
+        socket: null,
+        participantMaps: {}
     };
 
     // API Configuration
@@ -54,13 +55,13 @@
         // Alert filter
         const alertFilter = document.getElementById('alert-filter');
         if (alertFilter) {
-            alertFilter.addEventListener('change', filterAlerts);
+            alertFilter.addEventListener('change', () => loadAlertsList());
         }
 
         // Refresh buttons
         const refreshMapBtn = document.getElementById('refresh-map-btn');
         if (refreshMapBtn) {
-            refreshMapBtn.addEventListener('click', refreshMapData);
+            refreshMapBtn.addEventListener('click', () => loadDashboardData());
         }
 
         const refreshAlertsBtn = document.getElementById('refresh-alerts-btn');
@@ -203,15 +204,33 @@
         }
     }
 
+    function safeJsonParse(v) {
+        if (!v) return null;
+        if (typeof v === 'object') return v;
+        try { return JSON.parse(v); } catch (e) { return null; }
+    }
+
+
+
     // ---- DATA LOADING FUNCTIONS ----
 
     async function loadDashboardData() {
-        // Load participants count
+        // Load participants
         const participants = await apiGet('/participants');
-        const alerts = await apiGet('/alerts?active=true');
-
         state.participants = participants || [];
-        state.alerts = alerts || [];
+
+        // Load alerts
+        const geofenceAlerts = await apiGet('/alerts?active=true');
+        const signatureAlerts = await apiGet('/signature-alerts?active=true');
+
+        const merged = [
+            ...(geofenceAlerts || []).map(a => ({ ...a, alert_type: 'geofence' })),
+            ...(signatureAlerts || []).map(a => ({ ...a, alert_type: 'signature' }))
+        ];
+
+        const sortTs = (a) => a.triggered_at || a.created_at || a.hour_start || 0;
+        merged.sort((a, b) => new Date(sortTs(b)).getTime() - new Date(sortTs(a)).getTime());
+        state.alerts = merged;
 
         // Update stats
         document.getElementById('stat-participants').textContent = state.participants.length;
@@ -250,25 +269,41 @@
     }
 
     // ---- RECENT ALERTS (Dashboard) ----
-
     function loadRecentAlerts() {
         const tbody = document.getElementById('recent-alerts-table');
         if (!tbody) return;
 
-        if (state.alerts.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#888;">No active alerts</td></tr>';
+        const recentAlerts = state.alerts.slice(0, 5);
+
+        if (recentAlerts.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#888;">No alerts</td></tr>';
             return;
         }
 
-        const recentAlerts = state.alerts.slice(0, 5);
-        tbody.innerHTML = recentAlerts.map(alert => `
-            <tr>
-                <td>${formatTimestamp(alert.triggered_at)}</td>
-                <td>${alert.participant_name || alert.participant_id}</td>
-                <td>Entered: ${alert.zone_name || 'Red Zone'}</td>
-                <td><span class="risk-badge risk-high">geofence</span></td>
-            </tr>
-        `).join('');
+        tbody.innerHTML = recentAlerts.map(alert => {
+            const isGeofence = alert.alert_type === 'geofence';
+            const isSignature = alert.alert_type === 'signature';
+
+            if (isGeofence) {
+                return `
+                    <tr>
+                        <td>${formatTimestamp(alert.triggered_at)}</td>
+                        <td>${alert.participant_name || alert.participant_id || '--'}</td>
+                        <td>Entered: ${alert.zone_name || 'Red Zone'}</td>
+                        <td><span class="risk-badge risk-high">${alert.alert_type}</span></td>
+                    </tr>
+                `;
+            } else if (isSignature) {
+                return `
+                    <tr>
+                        <td>${formatTimestamp(alert.created_at || alert.hour_start)}</td>
+                        <td>${alert.participant_id || '--'}</td>
+                        <td>Signature: ${alert.alert_code || 'ALERT'} (${alert.severity || 'high'})</td>
+                        <td><span class="risk-badge risk-high">signature</span></td>
+                    </tr>
+                `;
+            }
+        }).join('');
     }
 
     // ---- PARTICIPANTS VIEW ----
@@ -359,41 +394,30 @@
 
         const location = await apiGet(`/participants/${deviceId}/location`);
 
-        if (location && location.data) {
-            try {
-                const data = typeof location.data === 'string' ? JSON.parse(location.data) : location.data;
-                const lat = data.latitude;
-                const lon = data.longitude;
+        if (location && location.latitude != null && location.longitude != null) {
+            const lat = location.latitude;
+            const lon = location.longitude;
 
-                if (lat && lon) {
-                    // Remove old marker
-                    if (mapObj.marker) {
-                        mapObj.map.removeLayer(mapObj.marker);
-                    }
-
-                    // Add new marker
-                    mapObj.marker = L.marker([lat, lon]).addTo(mapObj.map);
-                    mapObj.map.setView([lat, lon], 15);
-
-                    // Update info - handle timestamp (could be in seconds or milliseconds)
-                    let timestamp = 'Unknown';
-                    if (location.timestamp) {
-                        // If timestamp is less than 10 billion, it's in seconds; otherwise milliseconds
-                        const ts = location.timestamp < 10000000000 ? location.timestamp * 1000 : location.timestamp;
-                        timestamp = new Date(ts).toLocaleString();
-                    }
-                    infoDiv.innerHTML = `
-                        <strong>Coordinates:</strong> ${lat.toFixed(6)}, ${lon.toFixed(6)} | 
-                        <strong>Accuracy:</strong> ${data.accuracy ? Math.round(data.accuracy) + 'm' : 'N/A'} | 
-                        <strong>Last Update:</strong> ${timestamp}
-                    `;
-                } else {
-                    infoDiv.innerHTML = '<span style="color:#c9302c;">No valid coordinates available</span>';
-                }
-            } catch (e) {
-                console.warn('Failed to parse location data:', e);
-                infoDiv.innerHTML = '<span style="color:#c9302c;">Error parsing location data</span>';
+            // Remove old marker
+            if (mapObj.marker) {
+                mapObj.map.removeLayer(mapObj.marker);
             }
+
+            // Add new marker
+            mapObj.marker = L.marker([lat, lon]).addTo(mapObj.map);
+            mapObj.map.setView([lat, lon], 15);
+
+            // Update info - handle timestamp (could be in seconds or milliseconds)
+            let timestamp = 'Unknown';
+            if (location.timestamp) {
+                const ts = location.timestamp < 10000000000 ? location.timestamp * 1000 : location.timestamp;
+                timestamp = new Date(ts).toLocaleString();
+            }
+            infoDiv.innerHTML = `
+                <strong>Coordinates:</strong> ${lat.toFixed(6)}, ${lon.toFixed(6)} | 
+                <strong>Accuracy:</strong> ${location.accuracy ? Math.round(location.accuracy) + 'm' : 'N/A'} | 
+                <strong>Last Update:</strong> ${timestamp}
+            `;
         } else {
             infoDiv.innerHTML = '<span style="color:#888;">No location data available for this participant</span>';
         }
@@ -416,55 +440,112 @@
             endpoint = '/alerts?active=true';
         }
 
-        const alerts = await apiGet(endpoint);
+        const geofenceAlerts = await apiGet(endpoint);
+        const sigEndpoint = (filter === 'active') ? '/signature-alerts?active=true' : '/signature-alerts';
+        const signatureAlerts = await apiGet(sigEndpoint);
+
+        let alerts = [
+            ...(geofenceAlerts || []).map(a => ({ ...a, alert_type: 'geofence' })),
+            ...(signatureAlerts || []).map(a => ({ ...a, alert_type: 'signature' }))
+        ];
+
+        // Determine acknowledged status consistently
+        const isAck = (a) => {
+            if (a.alert_type === 'signature') return !!a.acknowledged_at;
+            return !!a.acknowledged; // geofence
+        };
+
+        if (filter === 'acknowledged') alerts = alerts.filter(isAck);
+        if (filter === 'active') alerts = alerts.filter(a => !isAck(a));
+
+        // Sort all alerts by timestamp
+        const sortTs = (a) => a.triggered_at || a.created_at || a.hour_start || 0;
+        alerts.sort((a, b) => new Date(sortTs(b)).getTime() - new Date(sortTs(a)).getTime());
 
         if (!alerts || alerts.length === 0) {
-            container.innerHTML = '<div class="alert-item info"><div class="alert-content"><div class="alert-title">No Alerts</div><div class="alert-description">No geofence alerts have been triggered.</div></div></div>';
+            container.innerHTML = '<div class="alert-item info"><div class="alert-content"><div class="alert-title">No Alerts</div><div class="alert-description">No alerts have been triggered.</div></div></div>';
             return;
         }
 
-        // Filter locally for acknowledged
+        // Filter locally for acknowledged (again if needed)
         let filteredAlerts = alerts;
         if (filter === 'acknowledged') {
-            filteredAlerts = alerts.filter(a => a.acknowledged);
+            filteredAlerts = alerts.filter(isAck);
         } else if (filter === 'active') {
-            filteredAlerts = alerts.filter(a => !a.acknowledged);
+            filteredAlerts = alerts.filter(a => !isAck(a));
         }
 
-        container.innerHTML = filteredAlerts.map(alert => `
-            <div class="alert-item ${alert.acknowledged ? 'info' : 'critical'}">
-                <div class="alert-icon">${alert.acknowledged ? '<i class="fas fa-check"></i>' : '<i class="fas fa-exclamation"></i>'}</div>
-                <div class="alert-content">
-                    <div class="alert-title">Geofence Breach: ${alert.zone_name || 'Red Zone'}</div>
-                    <div class="alert-description">
-                        Participant ${alert.participant_name || alert.participant_id} entered a red zone.
-                        Distance from center: ${Math.round(alert.distance)}m
+        container.innerHTML = filteredAlerts.map(alert => {
+            const isGeofence = alert.alert_type === 'geofence';
+            const isSignature = alert.alert_type === 'signature';
+
+            const title = isGeofence
+                ? `Geofence Breach: ${alert.zone_name || 'Red Zone'}`
+                : `Signature Alert: ${alert.alert_code || ''} (${alert.severity || 'high'})`;
+
+            let desc;
+
+            if (isGeofence) {
+                desc = `Participant ${alert.participant_name || alert.participant_id} entered a red zone. Distance from center: ${Math.round(alert.distance)}m`;
+            } else {
+                const who = alert.participant_id || '--';
+                const name = alert.alert_name || '';
+                const expl = alert.explanation || '';
+                const score = alert.score ? `Score: ${alert.score.toFixed(4)}` : '';
+                desc = `Participant ${who}. ${name}${expl ? ' — ' + expl : ''} ${score}`;
+            }
+
+            const acknowledged = isSignature ? !!alert.acknowledged_at : !!alert.acknowledged;
+            const ackText = acknowledged ? `| Acknowledged by ${alert.acknowledged_by || ''}` : '';
+
+            const ackBtn = (!acknowledged)
+                ? (isGeofence
+                    ? `<button class="btn btn-sm btn-primary" onclick="acknowledgeAlert('${alert.alert_id}')"><i style="margin-right: 5px;" class="fas fa-check"></i> Acknowledge</button>`
+                    : `<button class="btn btn-sm btn-primary" onclick="acknowledgeSignatureAlert(${alert.id})"><i style="margin-right: 5px;" class="fas fa-check"></i> Acknowledge</button>`
+                )
+                : '';
+
+            const shownTime = isSignature
+                ? (alert.created_at || alert.hour_start)
+                : alert.triggered_at;
+
+            return `
+                <div class="alert-item ${acknowledged ? 'info' : 'critical'}">
+                    <div class="alert-icon">${acknowledged ? '<i class="fas fa-check"></i>' : '<i class="fas fa-exclamation"></i>'}</div>
+                    <div class="alert-content">
+                        <div class="alert-title">${title}</div>
+                        <div class="alert-description">${desc}</div>
+                        <div class="alert-meta">
+                            ${formatTimestamp(shownTime)} ${acknowledged ? ackText : ''}
+                        </div>
                     </div>
-                    <div class="alert-meta">
-                        ${formatTimestamp(alert.triggered_at)}
-                        ${alert.acknowledged ? `| Acknowledged by ${alert.acknowledged_by}` : ''}
+                    <div class="alert-actions">
+                        ${ackBtn}
                     </div>
                 </div>
-                <div class="alert-actions">
-                    ${!alert.acknowledged ? `
-                        <button class="btn btn-sm btn-primary" onclick="acknowledgeAlert('${alert.alert_id}')"><i style="margin-right: 5px;" class="fas fa-check"></i> Acknowledge</button>
-                    ` : ''}
-                </div>
-            </div>
-        `).join('');
+            `;
+        }).join('');
     }
 
-    function filterAlerts() {
-        loadAlertsList();
-    }
-
-    // Global function for acknowledge button
+    // Global function for acknowledge geofence alert button
     window.acknowledgeAlert = async function (alertId) {
         const username = sessionStorage.getItem('dp_ids_user') || 'admin';
         const result = await apiPost(`/alerts/${alertId}/acknowledge?by=${username}`, {});
         if (result && result.ok) {
             loadAlertsList();
             loadDashboardData(); // Refresh dashboard stats too
+        }
+    };
+
+
+
+    // Global function for acknowledge SIGNATURE alert button
+    window.acknowledgeSignatureAlert = async function (id) {
+        const username = sessionStorage.getItem('dp_ids_user') || 'admin';
+        const result = await apiPost(`/signature-alerts/${id}/acknowledge?by=${username}`, {});
+        if (result && result.ok) {
+            loadAlertsList();
+            loadDashboardData();
         }
     };
 

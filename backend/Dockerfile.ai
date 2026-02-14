@@ -1,0 +1,9 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY build_hourly_features_and_alerts.py .
+
+RUN pip install --no-cache-dir pandas numpy scikit-learn mysql-connector-python
+
+CMD ["python", "-u", "build_hourly_features_and_alerts.py"]

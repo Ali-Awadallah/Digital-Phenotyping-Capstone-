@@ -93,7 +93,7 @@ class MainVerticle : AbstractVerticle() {
 
         // HttpServerOptions.host is the host to listen on. So using |server_host|, not |external_server_host| here.
         // See also: https://vertx.io/docs/4.3.3/apidocs/io/vertx/core/net/NetServerOptions.html#DEFAULT_HOST
-        serverOptions.host = serverConfig.getString("server_host")
+        serverOptions.host = System.getenv("SERVER_HOST") ?: serverConfig.getString("server_host")
 
         // ---- API SUBROUTER (put BEFORE any "/:studyNumber/:studyKey" routes) ----------------------------------------------------------------------------------------------
         val api = Router.router(vertx)
@@ -290,31 +290,28 @@ class MainVerticle : AbstractVerticle() {
             val x = body.getDouble("x")
             val y = body.getDouble("y")
             val z = body.getDouble("z")
-            val magnitude = body.getDouble("magnitude")
 
-            val record = JsonObject()
+            logger.info { "Gyro from $deviceId: x=$x y=$y z=$z" }
+
+            val gyroData = JsonObject()
+              .put("device_id", deviceId)
               .put("timestamp", ts)
               .put("x", x)
               .put("y", y)
               .put("z", z)
-              .put("magnitude", magnitude)
 
-            val dataArray = JsonArray().add(record)
-
-            // store in DB table "gyroscope"
-            vertx.eventBus().publish(
-              "insertData",
-              JsonObject()
-                .put("table", "gyroscope")
-                .put("device_id", deviceId)
-                .put("data", dataArray.encode())
-            )
-
-            logger.info { "Gyro from $deviceId: x=$x y=$y z=$z mag=$magnitude" }
-
-            ctx.response()
-              .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-              .end(JsonObject().put("ok", true).encode())
+            vertx.eventBus().request<JsonObject>("insertGyroscope", gyroData) { ar ->
+              if (ar.succeeded()) {
+                ctx.response()
+                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode())
+              } else {
+                logger.error(ar.cause()) { "Failed to store gyroscope" }
+                ctx.response()
+                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode())
+              }
+            }
           } catch (e: Exception) {
             logger.error(e) { "Error handling /api/gyroscope" }
             ctx.response().setStatusCode(400)
@@ -332,30 +329,28 @@ class MainVerticle : AbstractVerticle() {
             val x = body.getDouble("x")
             val y = body.getDouble("y")
             val z = body.getDouble("z")
-            val magnitude = body.getDouble("magnitude")
 
-            val record = JsonObject()
+            logger.info { "Accel from $deviceId: x=$x y=$y z=$z" }
+
+            val accelData = JsonObject()
+              .put("device_id", deviceId)
               .put("timestamp", ts)
               .put("x", x)
               .put("y", y)
               .put("z", z)
-              .put("magnitude", magnitude)
 
-            val dataArray = JsonArray().add(record)
-
-            vertx.eventBus().publish(
-              "insertData",
-              JsonObject()
-                .put("table", "accelerometer")
-                .put("device_id", deviceId)
-                .put("data", dataArray.encode())
-            )
-
-            logger.info { "Accel from $deviceId: x=$x y=$y z=$z mag=$magnitude" }
-
-            ctx.response()
-              .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-              .end(JsonObject().put("ok", true).encode())
+            vertx.eventBus().request<JsonObject>("insertAccelerometer", accelData) { ar ->
+              if (ar.succeeded()) {
+                ctx.response()
+                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode())
+              } else {
+                logger.error(ar.cause()) { "Failed to store accelerometer" }
+                ctx.response()
+                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode())
+              }
+            }
           } catch (e: Exception) {
             logger.error(e) { "Error handling /api/accelerometer" }
             ctx.response().setStatusCode(400)
@@ -409,34 +404,32 @@ class MainVerticle : AbstractVerticle() {
             val longitude = body.getDouble("longitude")
             val accuracy = body.getDouble("accuracy")
             val altitude = body.getDouble("altitude")
-            val speed = body.getDouble("speed")
 
-            val record = JsonObject()
+            logger.info { "Location from $deviceId: lat=$latitude lon=$longitude acc=$accuracy" }
+
+            val locationData = JsonObject()
+              .put("device_id", deviceId)
               .put("timestamp", ts)
               .put("latitude", latitude)
               .put("longitude", longitude)
-              .put("accuracy", accuracy)
               .put("altitude", altitude)
-              .put("speed", speed)
+              .put("accuracy", accuracy)
 
-            val dataArray = JsonArray().add(record)
-
-            vertx.eventBus().publish(
-              "insertData",
-              JsonObject()
-                .put("table", "location")
-                .put("device_id", deviceId)
-                .put("data", dataArray.encode())
-            )
-
-            logger.info { "Location from $deviceId: lat=$latitude lon=$longitude acc=$accuracy speed=$speed" }
+            vertx.eventBus().request<JsonObject>("insertLocation", locationData) { ar ->
+              if (ar.succeeded()) {
+                ctx.response()
+                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode())
+              } else {
+                logger.error(ar.cause()) { "Failed to store location" }
+                ctx.response()
+                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .end(JsonObject().put("ok", true).encode())
+              }
+            }
 
             // Check geofences for this device
             checkGeofence(deviceId, latitude, longitude)
-
-            ctx.response()
-              .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-              .end(JsonObject().put("ok", true).encode())
           } catch (e: Exception) {
             logger.error(e) { "Error handling /api/location" }
             ctx.response().setStatusCode(400)
@@ -786,6 +779,53 @@ class MainVerticle : AbstractVerticle() {
               ctx.response()
                 .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
                 .end(ar.result().body().encode())
+            } else {
+              ctx.response().setStatusCode(500)
+                .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                .end(JsonObject().put("error", ar.cause().message).encode())
+            }
+          }
+        }
+
+
+
+
+        // ---- SIGNATURE ALERT ENDPOINTS ----
+
+        // GET /api/signature-alerts?active=true|false&limit=200
+        api.get("/signature-alerts").handler { ctx ->
+          val activeOnly = ctx.queryParam("active").firstOrNull()?.toBoolean() ?: false
+          val limit = ctx.queryParam("limit").firstOrNull()?.toIntOrNull() ?: 200
+
+          vertx.eventBus().request<JsonArray>(
+            "getSignatureAlerts",
+            JsonObject().put("active_only", activeOnly).put("limit", limit)
+          ) { ar ->
+            if (ar.succeeded()) {
+              ctx.response()
+                .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                .end(ar.result().body().encode())
+            } else {
+              ctx.response().setStatusCode(500)
+                .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                .end(JsonObject().put("error", ar.cause().message).encode())
+            }
+          }
+        }
+
+        // POST /api/signature-alerts/:id/acknowledge?by=admin
+        api.post("/signature-alerts/:id/acknowledge").handler { ctx ->
+          val id = ctx.pathParam("id").toLong()
+          val by = ctx.queryParam("by").firstOrNull() ?: "admin"
+
+          vertx.eventBus().request<JsonObject>(
+            "acknowledgeSignatureAlert",
+            JsonObject().put("id", id).put("acknowledged_by", by)
+          ) { ar ->
+            if (ar.succeeded()) {
+              ctx.response()
+                .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                .end(JsonObject().put("ok", true).encode())
             } else {
               ctx.response().setStatusCode(500)
                 .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")

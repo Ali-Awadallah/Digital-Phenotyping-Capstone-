@@ -3,11 +3,13 @@ services:
   mysql:
     image: mysql:8.0
     container_name: dp-mysql
+    command: --default-time-zone='+03:00'
     environment:
       MYSQL_ROOT_PASSWORD: rootpassword
       MYSQL_DATABASE: aware_db
       MYSQL_USER: aware_user
       MYSQL_PASSWORD: password
+      TZ: Asia/Qatar
     ports:
       - "3307:3306"
     volumes:
@@ -27,20 +29,52 @@ services:
       dockerfile: Dockerfile
     container_name: dp-backend
     ports:
-      - "8090:8080"
-      - "8091:8081"
+      - "8080:8080"
+      - "8081:8081"
     environment:
-      # Override database host to use Docker network
       DATABASE_HOST: mysql
+      DATABASE_PORT: "3306"
+      DATABASE_NAME: aware_db
+      DATABASE_USER: aware_user
+      DATABASE_PASSWORD: password
+      SERVER_HOST: "0.0.0.0"
+      TZ: Asia/Qatar
     depends_on:
       mysql:
         condition: service_healthy
     volumes:
-      # Mount config for easy updates (optional)
-      - ./aware-config-docker.json:/app/aware-config.json:ro
+      - ./aware-config.json:/app/aware-config.json:ro
     networks:
       - dp-network
     restart: unless-stopped
+
+
+  # Signature engine service (hourly features + signature alerts)
+  signature_engine:
+    build:
+      context: .
+      dockerfile: Dockerfile.ai
+    container_name: signature-engine-service
+    environment:
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_NAME: aware_db
+      DB_USER: aware_user
+      DB_PASSWORD: password
+      PYTHONUNBUFFERED: "1"
+      LOOP_INTERVAL_SEC: "60"
+      TZ: Asia/Qatar
+    depends_on:
+      mysql:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - dp-network
+    restart: unless-stopped
+    command: ["python", "-u", "/app/build_hourly_features_and_alerts.py", "--loop"]
 
 volumes:
   mysql_data:

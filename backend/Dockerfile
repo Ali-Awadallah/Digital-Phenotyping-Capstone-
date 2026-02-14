@@ -16,10 +16,13 @@ RUN gradle dependencies --no-daemon
 
 # Copy source code
 COPY src ./src
-COPY LICENSE ./
+
+# Cache bust to force fresh snapshot allocation
+ARG CACHE_BUST=1
+RUN echo "Building with cache bust: ${CACHE_BUST}"
 
 # Build the fat JAR
-RUN gradle shadowJar --no-daemon
+RUN gradle shadowJar --no-daemon --info
 
 # Stage 2: Run the application
 FROM eclipse-temurin:17-jre-alpine
@@ -36,8 +39,8 @@ COPY aware-config.json ./
 EXPOSE 8080 8081
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/testing || exit 1
 
 # Run the application
 ENTRYPOINT ["java", "-jar", "app.jar", "run", "com.awareframework.micro.MainVerticle"]
