@@ -1,4 +1,5 @@
-import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
+import { useState, useEffect } from "react";
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from "react-native";
 import {
   SafeAreaView,
   useSafeAreaInsets,
@@ -7,12 +8,14 @@ import { NavigationContainer } from "@react-navigation/native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { Ionicons as Icon } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import HomeScreen from "../screens/HomeScreen";
 import SensorsScreen from "../screens/SensorsScreen";
 import SettingsScreen from "../screens/SettingsScreen";
 import ProfileScreen from "../screens/ProfileScreen";
 import AlertsScreen from "../screens/AlertsScreen";
 import PermissionsScreen from "../screens/PermissionsScreen";
+import ConsentScreen, { CONSENT_KEY } from "../screens/ConsentScreen";
 import NotificationPing from "../components/NotificationPing";
 import { useApp } from "../context/AppContext";
 
@@ -118,9 +121,32 @@ function Tabs() {
 }
 
 export default function RootNavigator() {
+  const [initialRoute, setInitialRoute] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const consent = await AsyncStorage.getItem(CONSENT_KEY);
+        setInitialRoute(consent === "true" ? "Permissions" : "Consent");
+      } catch {
+        setInitialRoute("Consent");
+      }
+    })();
+  }, []);
+
+  // Show loading while checking consent status
+  if (!initialRoute) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#15d6a9" />
+      </View>
+    );
+  }
+
   return (
     <NavigationContainer>
       <Stack.Navigator
+        initialRouteName={initialRoute}
         screenOptions={{
           headerShown: false,
           animation: "slide_from_right",
@@ -128,6 +154,7 @@ export default function RootNavigator() {
           fullScreenGestureEnabled: true,
         }}
       >
+        <Stack.Screen name="Consent" component={ConsentScreen} />
         <Stack.Screen name="Permissions" component={PermissionsScreen} />
         <Stack.Screen name="Root" component={Tabs} />
       </Stack.Navigator>
@@ -136,6 +163,12 @@ export default function RootNavigator() {
 }
 
 const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: "#12181f",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   bottomNav: {
     flexDirection: "row",
     alignItems: "center",

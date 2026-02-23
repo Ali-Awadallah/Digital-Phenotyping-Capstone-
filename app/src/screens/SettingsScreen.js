@@ -1,10 +1,13 @@
-import { View, Text, StyleSheet, Switch, Alert, TouchableOpacity, ActivityIndicator } from "react-native";
-import { useState } from "react";
+import { View, Text, StyleSheet, Switch, Alert, TouchableOpacity, ActivityIndicator, TextInput } from "react-native";
+import { useState, useEffect } from "react";
 import { Ionicons as Icon } from "@expo/vector-icons";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useApp } from "../context/AppContext";
 import ScreenContainer from "../components/ScreenContainer";
 import HealthConnectService from "../services/HealthConnectService";
+import { getApiBase, setApiBase, buildApiUrl, testConnection } from "../../awareAPI";
+import PrivacyPolicyModal from "../components/PrivacyPolicyModal";
+import TermsConditionsModal from "../components/TermsConditionsModal";
 
 export default function SettingsScreen() {
   const {
@@ -34,6 +37,52 @@ export default function SettingsScreen() {
   const [hcPermissions, setHcPermissions] = useState(null);
   const [hcLoading, setHcLoading] = useState(false);
   const [hcData, setHcData] = useState(null);
+
+  // Server config state
+  const [serverIp, setServerIp] = useState("");
+  const [serverPort, setServerPort] = useState("8080");
+  const [serverStatus, setServerStatus] = useState(null); // null | 'testing' | 'connected' | 'failed'
+  const [serverError, setServerError] = useState("");
+
+  // Privacy modals state
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
+  const [showTermsModal, setShowTermsModal] = useState(false);
+
+  // Load saved server URL on mount
+  useEffect(() => {
+    (async () => {
+      const saved = await getApiBase();
+      // Parse IP and port from saved URL like "http://192.168.1.50:8080/api"
+      try {
+        const url = new URL(saved);
+        setServerIp(url.hostname);
+        setServerPort(url.port || "8080");
+      } catch {
+        setServerIp(saved);
+      }
+    })();
+  }, []);
+
+  const handleSaveAndTest = async () => {
+    if (!serverIp.trim()) {
+      Alert.alert("Error", "Please enter a server IP address");
+      return;
+    }
+    const newUrl = buildApiUrl(serverIp, serverPort);
+    setServerStatus("testing");
+    setServerError("");
+
+    const result = await testConnection(newUrl);
+    if (result.ok) {
+      await setApiBase(newUrl);
+      setServerStatus("connected");
+      Alert.alert("✅ Connected!", `Server at ${newUrl} is reachable.\nURL saved successfully.`);
+    } else {
+      setServerStatus("failed");
+      setServerError(result.error);
+      Alert.alert("❌ Connection Failed", `Could not reach ${newUrl}\n\n${result.error}\n\nURL was NOT saved.`);
+    }
+  };
 
   const handleBackgroundServiceToggle = async (next) => {
     if (next) {
@@ -180,10 +229,68 @@ export default function SettingsScreen() {
         <Text style={styles.contentTitle}>Settings</Text>
       </View>
 
-      <Text style={styles.infoText}>
-        Choose which sensors to collect. Turning a sensor off stops data
-        collection immediately.
-      </Text>
+      {/* Server Configuration */}
+      <View style={{ flexDirection: "row", alignItems: "center" }}>
+        <MaterialIcons name="dns" size={20} color="#4A90D9" />
+        <Text style={styles.sectionTitle}>Server Configuration</Text>
+      </View>
+      <View style={[styles.sensorSection, { borderColor: '#4a90d967' }]}>
+        <Text style={styles.hcDescription}>
+          Set your backend server IP address. Changes take effect immediately for all data collection.
+        </Text>
+
+        <View style={styles.serverInputRow}>
+          <View style={{ flex: 3 }}>
+            <Text style={styles.serverInputLabel}>Server IP</Text>
+            <TextInput
+              style={styles.serverInput}
+              value={serverIp}
+              onChangeText={setServerIp}
+              placeholder="192.168.1.110"
+              placeholderTextColor="#555"
+              keyboardType="url"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </View>
+          <View style={{ width: 12 }} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.serverInputLabel}>Port</Text>
+            <TextInput
+              style={styles.serverInput}
+              value={serverPort}
+              onChangeText={setServerPort}
+              placeholder="8080"
+              placeholderTextColor="#555"
+              keyboardType="number-pad"
+            />
+          </View>
+        </View>
+
+        {/* Status indicator */}
+        {serverStatus && (
+          <View style={styles.serverStatusRow}>
+            {serverStatus === "testing" && (
+              <><ActivityIndicator size="small" color="#4A90D9" /><Text style={[styles.serverStatusText, { color: '#4A90D9' }]}>Testing connection...</Text></>
+            )}
+            {serverStatus === "connected" && (
+              <><MaterialIcons name="check-circle" size={18} color="#32D74B" /><Text style={[styles.serverStatusText, { color: '#32D74B' }]}>Connected</Text></>
+            )}
+            {serverStatus === "failed" && (
+              <><MaterialIcons name="error" size={18} color="#FF453A" /><Text style={[styles.serverStatusText, { color: '#FF453A' }]}>{serverError || 'Connection failed'}</Text></>
+            )}
+          </View>
+        )}
+
+        <TouchableOpacity
+          style={[styles.serverTestBtn, serverStatus === 'testing' && { opacity: 0.5 }]}
+          onPress={handleSaveAndTest}
+          disabled={serverStatus === 'testing'}
+        >
+          <MaterialIcons name="wifi-tethering" size={20} color="#fff" />
+          <Text style={styles.serverTestBtnText}>Save & Test Connection</Text>
+        </TouchableOpacity>
+      </View>
 
       {/* Background Service Toggle */}
       <Text style={styles.sectionTitle}>Background Collection</Text>
@@ -211,6 +318,9 @@ export default function SettingsScreen() {
       </View>
 
       <Text style={styles.sectionTitle}>Sensor Toggles</Text>
+      <Text style={styles.infoText}>
+        Choose which sensors to collect. Turning a sensor off stops data collection immediately.
+      </Text>
       <View style={styles.sensorSection}>
         <Row
           label="Location"
@@ -310,6 +420,39 @@ export default function SettingsScreen() {
           <Text style={[styles.hcButtonText, { color: '#34C759' }]}>Sync Wearable Data</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Privacy Section */}
+      <View style={{ flexDirection: "row", alignItems: "center" }}>
+        <MaterialIcons name="shield" size={20} color="#15d6a9" />
+        <Text style={styles.sectionTitle}>Privacy</Text>
+      </View>
+      <View style={[styles.sensorSection, { borderColor: '#15d6a96e' }]}>
+        <Text style={styles.hcDescription}>
+          Review our data collection policies and your rights as a participant.
+        </Text>
+
+        <TouchableOpacity style={styles.hcButton} onPress={() => setShowPrivacyModal(true)}>
+          <MaterialIcons name="privacy-tip" size={20} color="#15d6a9" />
+          <Text style={styles.hcButtonText}>Privacy Policy</Text>
+          <MaterialIcons name="chevron-right" size={20} color="#555" />
+        </TouchableOpacity>
+
+        <TouchableOpacity style={[styles.hcButton, { borderBottomWidth: 0 }]} onPress={() => setShowTermsModal(true)}>
+          <MaterialIcons name="description" size={20} color="#4A90D9" />
+          <Text style={styles.hcButtonText}>Terms & Conditions</Text>
+          <MaterialIcons name="chevron-right" size={20} color="#555" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Privacy Modals */}
+      <PrivacyPolicyModal
+        visible={showPrivacyModal}
+        onClose={() => setShowPrivacyModal(false)}
+      />
+      <TermsConditionsModal
+        visible={showTermsModal}
+        onClose={() => setShowTermsModal(false)}
+      />
     </ScreenContainer>
   );
 }
@@ -472,5 +615,55 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: "Archivo",
     textTransform: "capitalize",
+  },
+  serverInputRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    marginBottom: 12,
+  },
+  serverInputLabel: {
+    color: "#999",
+    fontSize: 12,
+    fontFamily: "Archivo-SemiBold",
+    marginBottom: 4,
+    marginLeft: 2,
+  },
+  serverInput: {
+    backgroundColor: "#1a222bff",
+    borderWidth: 1,
+    borderColor: "#4a90d940",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: "#fff",
+    fontSize: 15,
+    fontFamily: "Archivo",
+  },
+  serverStatusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+    paddingVertical: 4,
+  },
+  serverStatusText: {
+    fontSize: 13,
+    fontFamily: "Archivo",
+    marginLeft: 8,
+  },
+  serverTestBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#4A90D9",
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginTop: 4,
+  },
+  serverTestBtnText: {
+    color: "#fff",
+    fontSize: 15,
+    fontFamily: "Archivo-SemiBold",
+    marginLeft: 8,
   },
 });

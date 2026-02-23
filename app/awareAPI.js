@@ -1,13 +1,68 @@
 // /DP_demo/demo/awareApi.js
 
-const API_BASE = "http://192.168.10.3:8080/api"; // Put your own machine IP here or VM-backend IP
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
-export async function testConnection() {
-  const res = await fetch(`${API_BASE}/testing`);
-  return res.json(); // { ok: true }
+const STORAGE_KEY = "@server_url";
+const DEFAULT_URL = "http://192.168.10.8:8080/api";
+
+// ---- Dynamic API Base URL ----
+
+let _cachedBase = null; // in-memory cache so we don't hit AsyncStorage on every call
+
+/**
+ * Get the current API base URL (reads from cache or AsyncStorage).
+ */
+export async function getApiBase() {
+  if (_cachedBase) return _cachedBase;
+  try {
+    const saved = await AsyncStorage.getItem(STORAGE_KEY);
+    _cachedBase = saved || DEFAULT_URL;
+  } catch {
+    _cachedBase = DEFAULT_URL;
+  }
+  return _cachedBase;
+}
+
+/**
+ * Save a new API base URL. Call with e.g. "http://192.168.1.50:8080/api"
+ */
+export async function setApiBase(url) {
+  const trimmed = url.trim().replace(/\/+$/, ""); // remove trailing slashes
+  await AsyncStorage.setItem(STORAGE_KEY, trimmed);
+  _cachedBase = trimmed;
+}
+
+/**
+ * Build URL from stored server and optional port input.
+ * e.g. serverIp = "192.168.1.50", port = "8080"  ->  "http://192.168.1.50:8080/api"
+ */
+export function buildApiUrl(serverIp, port = "8080") {
+  const ip = serverIp.trim();
+  // If user typed a full URL, use it as-is
+  if (ip.startsWith("http://") || ip.startsWith("https://")) {
+    return ip.endsWith("/api") ? ip : `${ip.replace(/\/+$/, "")}/api`;
+  }
+  return `http://${ip}:${port}/api`;
+}
+
+// ---- API functions ----
+
+export async function testConnection(baseUrl) {
+  const base = baseUrl || (await getApiBase());
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000); // 5s timeout
+  try {
+    const res = await fetch(`${base}/testing`, { signal: controller.signal });
+    clearTimeout(timeout);
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    clearTimeout(timeout);
+    return { ok: false, error: e.message || "Connection failed" };
+  }
 }
 
 export async function sendEvent(device_id, value) {
+  const API_BASE = await getApiBase();
   const body = {
     device_id,
     ts: Date.now(),
@@ -24,6 +79,7 @@ export async function sendEvent(device_id, value) {
 }
 
 export async function getEvents(device_id) {
+  const API_BASE = await getApiBase();
   const now = Date.now();
   const res = await fetch(
     `${API_BASE}/events?device_id=${device_id}&start=0&end=${now}`
@@ -32,6 +88,7 @@ export async function getEvents(device_id) {
 }
 
 export async function sendBatteryReading(deviceId, percentage, chargingStatus = "unknown") {
+  const API_BASE = await getApiBase();
   const res = await fetch(`${API_BASE}/battery`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -46,6 +103,7 @@ export async function sendBatteryReading(deviceId, percentage, chargingStatus = 
 }
 
 export async function sendNotification(deviceId, appName, title, content, category, timestamp) {
+  const API_BASE = await getApiBase();
   const res = await fetch(`${API_BASE}/notification`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -62,6 +120,7 @@ export async function sendNotification(deviceId, appName, title, content, catego
 }
 
 export async function sendScreenState(deviceId, state) {
+  const API_BASE = await getApiBase();
   const res = await fetch(`${API_BASE}/screen`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -75,8 +134,9 @@ export async function sendScreenState(deviceId, state) {
 }
 
 export async function sendGyroscope(device_id, { ts, x, y, z, magnitude }) {
+  const API_BASE = await getApiBase();
   const body = { device_id, ts, x, y, z, magnitude };
-  console.log("Sending gyro:", body);
+  //console.log("Sending gyro:", body);
 
   const res = await fetch(`${API_BASE}/gyroscope`, {
     method: "POST",
@@ -88,8 +148,9 @@ export async function sendGyroscope(device_id, { ts, x, y, z, magnitude }) {
 }
 
 export async function sendAccelerometer(device_id, { ts, x, y, z, magnitude }) {
+  const API_BASE = await getApiBase();
   const body = { device_id, ts, x, y, z, magnitude };
-  console.log("Sending accel:", body);
+  //console.log("Sending accel:", body);
 
   const res = await fetch(`${API_BASE}/accelerometer`, {
     method: "POST",
@@ -101,6 +162,7 @@ export async function sendAccelerometer(device_id, { ts, x, y, z, magnitude }) {
 }
 
 export async function sendPedometer(device_id, { ts, steps }) {
+  const API_BASE = await getApiBase();
   const body = { device_id, ts, steps };
   console.log("Sending pedometer:", body);
 
@@ -114,8 +176,9 @@ export async function sendPedometer(device_id, { ts, steps }) {
 }
 
 export async function sendLocation(device_id, { ts, latitude, longitude, accuracy, altitude, speed }) {
+  const API_BASE = await getApiBase();
   const body = { device_id, ts, latitude, longitude, accuracy, altitude, speed };
-  console.log("Sending location:", body);
+  //console.log("Sending location:", body);
 
   const res = await fetch(`${API_BASE}/location`, {
     method: "POST",
