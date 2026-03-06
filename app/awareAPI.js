@@ -24,12 +24,22 @@ export async function getApiBase() {
 }
 
 /**
- * Save a new API base URL. Call with e.g. "http://192.168.1.50:8080/api"
+ * Save a new API base URL. Syncs to both JS (AsyncStorage) and native (SharedPreferences).
  */
 export async function setApiBase(url) {
   const trimmed = url.trim().replace(/\/+$/, ""); // remove trailing slashes
   await AsyncStorage.setItem(STORAGE_KEY, trimmed);
   _cachedBase = trimmed;
+
+  // Sync to native Android BackendAPIClient so background service uses same URL
+  try {
+    const { NativeModules, Platform } = require("react-native");
+    if (Platform.OS === "android" && NativeModules.BackgroundService) {
+      await NativeModules.BackgroundService.setAPIBaseURL(trimmed);
+    }
+  } catch (e) {
+    console.warn("Failed to sync API base to native layer:", e);
+  }
 }
 
 /**

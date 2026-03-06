@@ -16,6 +16,7 @@ import * as Battery from "expo-battery";
 import { useScreenEventsEx2 } from "../hooks/useScreenEventsEx2";
 import { useNotificationEventsEx2 } from "../hooks/useNotificationEventsEx2";
 import BackgroundService from "../services/BackgroundService";
+import { getApiBase } from "../../awareAPI";
 
 // native modules
 const AppUsageNative = NativeModules.AppUsage;
@@ -81,6 +82,17 @@ export function AppProvider({ children }) {
             setBackgroundServiceEnabled(p.backgroundServiceEnabled);
         }
       } catch { }
+
+      // Sync saved server URL to native BackendAPIClient on every app launch
+      try {
+        const savedUrl = await getApiBase();
+        if (savedUrl && BackgroundService.isAvailable()) {
+          await BackgroundService.setAPIBaseURL(savedUrl);
+        }
+      } catch (e) {
+        console.warn("Failed to sync server URL to native on startup:", e);
+      }
+
       setPrefsLoaded(true);
     })();
   }, []);
