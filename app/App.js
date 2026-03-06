@@ -1,4 +1,4 @@
-import {SafeAreaView, View, StyleSheet, Text as RNText } from "react-native";
+import { SafeAreaView, View, StyleSheet, Text as RNText } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AppProvider } from "./src/context/AppContext";
 import RootNavigator from "./src/navigation/RootNavigator";
@@ -6,7 +6,6 @@ import { useFonts, Archivo_400Regular, Archivo_500Medium, Archivo_600SemiBold } 
 import { setCustomText } from 'react-native-global-props'
 import SensorService from "./src/services/SensorsService.js";
 import { AppState } from "react-native";
-
 
 export default function App() {
 
@@ -42,7 +41,6 @@ export default function App() {
     </SafeAreaProvider>
   );
 }
-
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f0f4f8" },

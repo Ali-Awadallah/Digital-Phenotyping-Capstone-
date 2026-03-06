@@ -151,8 +151,8 @@ export default function SensorsScreen() {
               <Text style={styles.sensorValue}>
                 {Math.sqrt(
                   accelerometerData.x ** 2 +
-                    accelerometerData.y ** 2 +
-                    accelerometerData.z ** 2
+                  accelerometerData.y ** 2 +
+                  accelerometerData.z ** 2
                 ).toFixed(3)}
                 g
               </Text>
@@ -202,8 +202,8 @@ export default function SensorsScreen() {
               <Text style={styles.sensorValue}>
                 {Math.sqrt(
                   gyroscopeData.x ** 2 +
-                    gyroscopeData.y ** 2 +
-                    gyroscopeData.z ** 2
+                  gyroscopeData.y ** 2 +
+                  gyroscopeData.z ** 2
                 ).toFixed(3)}{" "}
                 rad/s
               </Text>
@@ -255,8 +255,8 @@ export default function SensorsScreen() {
                 backgroundColor: !collectScreenEvents
                   ? "#FF3B30"
                   : screenEvents && screenEvents.length
-                  ? "#32D74B"
-                  : "#FFCC00",
+                    ? "#32D74B"
+                    : "#FFCC00",
               },
             ]}
           />
@@ -347,10 +347,10 @@ export default function SensorsScreen() {
             const color = !collectNotifications
               ? "#FF3B30"
               : !hasNotificationAccess
-              ? "#FF3B30"
-              : hasAny
-              ? "#32D74B"
-              : "#FFCC00";
+                ? "#FF3B30"
+                : hasAny
+                  ? "#32D74B"
+                  : "#FFCC00";
             return (
               <View
                 style={[styles.statusIndicator, { backgroundColor: color }]}
@@ -473,11 +473,11 @@ export default function SensorsScreen() {
                 backgroundColor: !collectBattery
                   ? "#FF3B30"
                   : batteryLevel != null && batteryLevel <= 0.2
-                  ? "#FF3B30"
-                  : batteryState === Battery.BatteryState.CHARGING ||
-                    batteryState === Battery.BatteryState.FULL
-                  ? "#32D74B"
-                  : "#FFCC00",
+                    ? "#FF3B30"
+                    : batteryState === Battery.BatteryState.CHARGING ||
+                      batteryState === Battery.BatteryState.FULL
+                      ? "#32D74B"
+                      : "#FFCC00",
               },
             ]}
           />
@@ -496,10 +496,10 @@ export default function SensorsScreen() {
                 {batteryState === Battery.BatteryState.CHARGING
                   ? "Charging"
                   : batteryState === Battery.BatteryState.FULL
-                  ? "Full"
-                  : batteryState === Battery.BatteryState.UNPLUGGED
-                  ? "Unplugged"
-                  : "Unknown"}
+                    ? "Full"
+                    : batteryState === Battery.BatteryState.UNPLUGGED
+                      ? "Unplugged"
+                      : "Unknown"}
               </Text>
             </Text>
           </View>

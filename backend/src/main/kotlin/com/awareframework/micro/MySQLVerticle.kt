@@ -1714,21 +1714,29 @@ class MySQLVerticle : AbstractVerticle() {
     val redZoneRadius = data.getInteger("red_zone_radius", 300)
     val status = data.getString("status", "active")
     val riskLevel = data.getString("risk_level", "low")
+    val isAutoLink = data.getBoolean("is_auto_link", false)
 
     sqlClient.getConnection { connectionResult ->
       if (connectionResult.succeeded()) {
         val connection = connectionResult.result()
-        val query = """
+        val query = if (isAutoLink) {
+          """
+          INSERT IGNORE INTO participants (participant_id, device_id, device_type, name, red_zone_radius, status, risk_level, created_at, updated_at)
+          VALUES ('$participantId', '$deviceId', '$deviceType', '$name', $redZoneRadius, '$status', '$riskLevel', NOW(), NOW())
+          """.trimIndent()
+        } else {
+          """
           INSERT INTO participants (participant_id, device_id, device_type, name, red_zone_radius, status, risk_level, created_at, updated_at)
           VALUES ('$participantId', '$deviceId', '$deviceType', '$name', $redZoneRadius, '$status', '$riskLevel', NOW(), NOW())
           ON DUPLICATE KEY UPDATE
-            device_type = VALUES(device_type),
+            device_type = IF(VALUES(device_type) = 'unknown', device_type, VALUES(device_type)),
             name = VALUES(name),
             red_zone_radius = VALUES(red_zone_radius),
             status = VALUES(status),
             risk_level = VALUES(risk_level),
             updated_at = NOW()
-        """.trimIndent()
+          """.trimIndent()
+        }
         connection.query(query).execute()
           .onSuccess {
             logger.info { "Upserted participant: $participantId" }

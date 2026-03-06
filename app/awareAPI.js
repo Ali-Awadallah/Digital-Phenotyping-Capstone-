@@ -198,3 +198,20 @@ export async function sendLocation(device_id, { ts, latitude, longitude, accurac
 
   return res.json();
 }
+
+/**
+ * Fetch participant info from the backend by device ID.
+ * @returns {Promise<Object|null>} participant object or null if not found
+ */
+export async function getParticipant(deviceId) {
+  const API_BASE = await getApiBase();
+  try {
+    const res = await fetch(`${API_BASE}/participants/${encodeURIComponent(deviceId)}`);
+    if (res.status === 404) return null;
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) {
+    console.warn("getParticipant error:", e);
+    return null;
+  }
+}

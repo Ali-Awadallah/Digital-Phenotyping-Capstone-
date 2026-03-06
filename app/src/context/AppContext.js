@@ -415,7 +415,7 @@ export function AppProvider({ children }) {
           if (!cancelled) setAccelerometerActive(false);
           return;
         }
-        Accelerometer.setUpdateInterval(16);
+        Accelerometer.setUpdateInterval(100);
         try {
           accelerometerSubRef.current &&
             accelerometerSubRef.current.remove &&
@@ -459,7 +459,7 @@ export function AppProvider({ children }) {
           if (!cancelled) setGyroscopeActive(false);
           return;
         }
-        Gyroscope.setUpdateInterval(16);
+        Gyroscope.setUpdateInterval(100);
         try {
           gyroscopeSubRef.current &&
             gyroscopeSubRef.current.remove &&

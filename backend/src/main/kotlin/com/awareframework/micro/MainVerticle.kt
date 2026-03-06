@@ -1365,6 +1365,7 @@ class MainVerticle : AbstractVerticle() {
       .put("device_id", safeDeviceId)
       .put("device_type", deviceType)
       .put("name", "Device $safeDeviceId")
+      .put("is_auto_link", true)
     if (!participantId.isNullOrBlank()) {
       payload.put("participant_id", participantId.trim())
     }
@@ -1441,6 +1442,7 @@ class MainVerticle : AbstractVerticle() {
           val newParticipant = JsonObject()
             .put("device_id", deviceId)
             .put("name", "Device $deviceId")
+            .put("is_auto_link", true)
           eventBus.publish("upsertParticipant", newParticipant)
           logger.info { "Auto-created participant for device: $deviceId" }
           return@request

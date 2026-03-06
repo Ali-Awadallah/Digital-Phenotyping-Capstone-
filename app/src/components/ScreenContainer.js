@@ -3,7 +3,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function ScreenContainer({
   children,
-  title = "Digital Phenotyping - client demo",
+  title = "Digital Phenotyping - Client",
 }) {
   return (
     <SafeAreaView style={styles.safe}>

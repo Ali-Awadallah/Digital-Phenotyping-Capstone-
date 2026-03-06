@@ -334,7 +334,7 @@
             } else if (isSignature) {
                 return `
                     <tr>
-                        <td>${formatTimestamp(alert.created_at || alert.hour_start)}</td>
+                        <td>${formatTimestamp(alert.created_at || alert.hour_start, true)}</td>
                         <td>${alert.participant_id || '--'}</td>
                         <td>Signature: ${alert.alert_code || 'ALERT'} (${alert.severity || 'high'})</td>
                         <td><span class="risk-badge risk-high">signature</span></td>
@@ -616,7 +616,7 @@
                         <div class="alert-description">${desc}</div>
                         <div class="alert-meta">
                             <span class="alert-source-badge ${sourceType}">${sourceType === 'watch' ? 'Watch' : 'Phone'}</span>
-                            ${formatTimestamp(shownTime)} ${acknowledged ? ackText : ''}
+                            ${formatTimestamp(shownTime, isSignature)} ${acknowledged ? ackText : ''}
                         </div>
                     </div>
                     <div class="alert-actions">
@@ -980,26 +980,24 @@
         });
     }
 
-    function formatTimestamp(timestamp) {
+    function formatTimestamp(timestamp, isSignature = false) {
         if (!timestamp) return 'Unknown';
         let ts = timestamp;
-        // Vert.x MySQL driver returns TIMESTAMP/DATETIME as UTC
-        // ISO strings like "2026-03-06T10:03:59" without tz suffix.
-        // Treat them as UTC, then display in Asia/Qatar.
         if (typeof ts === 'string') {
-            // Normalize space separator to T
             if (!ts.includes('T')) {
                 ts = ts.replace(' ', 'T');
             }
-            // If no timezone indicator, mark as UTC
-            if (!ts.endsWith('Z') && !/[+-]\d{2}:\d{2}$/.test(ts)) {
-                ts = ts + 'Z';
+            if (isSignature) {
+                if (!ts.endsWith('Z') && !/[+-]\d{2}:\d{2}$/.test(ts)) {
+                    ts = ts + 'Z';
+                }
+            } else {
+                ts = ts.replace('Z', '');
             }
         }
         const date = new Date(ts);
         if (isNaN(date.getTime())) return String(timestamp);
         return date.toLocaleString('en-US', {
-            timeZone: 'Asia/Qatar',
             year: 'numeric',
             month: 'short',
             day: 'numeric',

@@ -56,7 +56,7 @@ class SensorCollectorService : Service(), SensorEventListener {
         
         // Intervals (ms)
         private const val LOCATION_INTERVAL_MS = 15000L
-        private const val MOTION_BATCH_INTERVAL_MS = 5000L
+        private const val MOTION_BATCH_INTERVAL_MS = 1000L
         
         // Log file names
         private const val LOCATION_LOG = "location-events.log"
