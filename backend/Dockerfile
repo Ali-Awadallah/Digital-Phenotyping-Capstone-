@@ -32,8 +32,10 @@ WORKDIR /app
 # Copy the fat JAR from builder
 COPY --from=builder /app/build/libs/*-fat.jar app.jar
 
-# Copy the configuration file
-COPY aware-config.json ./
+# Bundle a valid default config; docker-compose can still override this at runtime.
+COPY aware-config-docker.json ./aware-config.json
+
+ENV AWARE_CONFIG_PATH=/app/aware-config.json
 
 # Expose ports (HTTP and WebSocket)
 EXPOSE 8080 8081

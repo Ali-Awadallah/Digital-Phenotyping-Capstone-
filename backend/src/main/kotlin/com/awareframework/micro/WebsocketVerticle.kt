@@ -1,9 +1,6 @@
 package com.awareframework.micro
 
 import io.github.oshai.kotlinlogging.KotlinLogging
-import io.vertx.config.ConfigRetriever
-import io.vertx.config.ConfigRetrieverOptions
-import io.vertx.config.ConfigStoreOptions
 import io.vertx.core.AbstractVerticle
 import io.vertx.core.Promise
 import io.vertx.core.http.ServerWebSocket
@@ -20,16 +17,7 @@ class WebsocketVerticle : AbstractVerticle() {
   override fun start(startPromise: Promise<Void>?) {
     super.start(startPromise)
 
-    val configStore = ConfigStoreOptions()
-      .setType("file")
-      .setFormat("json")
-      .setConfig(JsonObject().put("path", "aware-config.json"))
-
-    val configRetrieverOptions = ConfigRetrieverOptions()
-      .addStore(configStore)
-      .setScanPeriod(5000)
-
-    val configReader = ConfigRetriever.create(vertx, configRetrieverOptions)
+    val configReader = awareConfigRetriever(vertx)
     configReader.getConfig { config ->
       if (config.succeeded() && config.result().containsKey("server")) {
         parameters = config.result()
@@ -40,6 +28,12 @@ class WebsocketVerticle : AbstractVerticle() {
         vertx.eventBus().consumer<JsonObject>("battery.update") { message ->
           val update = message.body()
           broadcast(JsonObject().put("type", "battery_update").put("data", update))
+        }
+
+        // Listen for alert updates so dashboard can refresh instantly.
+        vertx.eventBus().consumer<JsonObject>("alerts.changed") { message ->
+          val update = message.body()
+          broadcast(JsonObject().put("type", "alert_update").put("data", update))
         }
 
         vertx.createHttpServer()

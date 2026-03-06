@@ -192,3 +192,7 @@ nbdist/
 #server config
 /aware-config.json
 /aware-config.json-backup
+
+#md files
+CHANGE_REPORT.md
+SCHEMA_DIFF_REPORT.md

@@ -9,6 +9,9 @@
         map: null,
         markers: [],
         refreshInterval: null,
+        alertsLiveInterval: null,
+        loadingAlerts: false,
+        alertRefreshTimer: null,
         alerts: [],
         participants: [],
         socket: null,
@@ -17,6 +20,8 @@
 
     // API Configuration
     const API_BASE = '/api';
+    const DASHBOARD_REFRESH_MS = 30000;
+    const ALERTS_LIVE_REFRESH_MS = 5000;
 
     // DOM Elements
     const elements = {
@@ -56,6 +61,21 @@
         const alertFilter = document.getElementById('alert-filter');
         if (alertFilter) {
             alertFilter.addEventListener('change', () => loadAlertsList());
+        }
+
+        const alertSourceFilter = document.getElementById('alert-source-filter');
+        if (alertSourceFilter) {
+            alertSourceFilter.addEventListener('change', () => loadAlertsList());
+        }
+
+        const alertParticipantFilter = document.getElementById('alert-participant-filter');
+        if (alertParticipantFilter) {
+            alertParticipantFilter.addEventListener('change', () => loadAlertsList());
+        }
+
+        const alertLimitFilter = document.getElementById('alert-limit-filter');
+        if (alertLimitFilter) {
+            alertLimitFilter.addEventListener('change', () => loadAlertsList());
         }
 
         // Refresh buttons
@@ -100,6 +120,15 @@
         sessionStorage.removeItem('dp_ids_user');
         if (state.refreshInterval) {
             clearInterval(state.refreshInterval);
+            state.refreshInterval = null;
+        }
+        if (state.alertsLiveInterval) {
+            clearInterval(state.alertsLiveInterval);
+            state.alertsLiveInterval = null;
+        }
+        if (state.alertRefreshTimer) {
+            clearTimeout(state.alertRefreshTimer);
+            state.alertRefreshTimer = null;
         }
         showLogin();
     }
@@ -137,7 +166,7 @@
             } else if (state.currentView === 'alerts') {
                 loadAlertsList();
             }
-        }, 30000);
+        }, DASHBOARD_REFRESH_MS);
     }
 
     // Navigate to View
@@ -174,6 +203,13 @@
 
         // Load view-specific data
         loadViewData(viewName);
+
+        // Keep alert list live while user is on Alerts view.
+        if (viewName === 'alerts') {
+            startAlertsLiveRefresh();
+        } else {
+            stopAlertsLiveRefresh();
+        }
     }
 
     // ---- API FUNCTIONS ----
@@ -221,11 +257,11 @@
 
         // Load alerts
         const geofenceAlerts = await apiGet('/alerts?active=true');
-        const signatureAlerts = await apiGet('/signature-alerts?active=true');
+        const signatureAlerts = await apiGet('/signature-alerts?active=true&limit=10000');
 
         const merged = [
-            ...(geofenceAlerts || []).map(a => ({ ...a, alert_type: 'geofence' })),
-            ...(signatureAlerts || []).map(a => ({ ...a, alert_type: 'signature' }))
+            ...(geofenceAlerts || []).map(a => ({ ...a, alert_type: 'geofence', source_type: 'phone' })),
+            ...(signatureAlerts || []).map(a => ({ ...a, alert_type: 'signature', source_type: getAlertSource(a) }))
         ];
 
         const sortTs = (a) => a.triggered_at || a.created_at || a.hour_start || 0;
@@ -246,6 +282,8 @@
         // Update last sync time
         state.lastSync = new Date();
         document.getElementById('last-sync').textContent = formatTime(state.lastSync);
+
+        updateAlertParticipantFilter();
 
         // Load recent alerts
         loadRecentAlerts();
@@ -429,11 +467,26 @@
     // ---- ALERTS VIEW ----
 
     async function loadAlertsList(filter = 'all') {
+        if (state.loadingAlerts) return;
+        state.loadingAlerts = true;
         const container = document.getElementById('alerts-list');
-        if (!container) return;
+        if (!container) {
+            state.loadingAlerts = false;
+            return;
+        }
+        if (!state.participants || state.participants.length === 0) {
+            const participants = await apiGet('/participants');
+            state.participants = participants || [];
+        }
 
         const filterSelect = document.getElementById('alert-filter');
         filter = filterSelect ? filterSelect.value : filter;
+        const sourceFilterSelect = document.getElementById('alert-source-filter');
+        const sourceFilter = sourceFilterSelect ? sourceFilterSelect.value : 'all';
+        const participantFilterSelect = document.getElementById('alert-participant-filter');
+        const participantFilter = participantFilterSelect ? participantFilterSelect.value : 'all';
+        const limitFilterSelect = document.getElementById('alert-limit-filter');
+        const alertLimit = limitFilterSelect ? limitFilterSelect.value : '10000';
 
         let endpoint = '/alerts';
         if (filter === 'active') {
@@ -441,12 +494,14 @@
         }
 
         const geofenceAlerts = await apiGet(endpoint);
-        const sigEndpoint = (filter === 'active') ? '/signature-alerts?active=true' : '/signature-alerts';
+        const sigEndpoint = (filter === 'active')
+            ? `/signature-alerts?active=true&limit=${encodeURIComponent(alertLimit)}`
+            : `/signature-alerts?limit=${encodeURIComponent(alertLimit)}`;
         const signatureAlerts = await apiGet(sigEndpoint);
 
         let alerts = [
-            ...(geofenceAlerts || []).map(a => ({ ...a, alert_type: 'geofence' })),
-            ...(signatureAlerts || []).map(a => ({ ...a, alert_type: 'signature' }))
+            ...(geofenceAlerts || []).map(a => ({ ...a, alert_type: 'geofence', source_type: 'phone' })),
+            ...(signatureAlerts || []).map(a => ({ ...a, alert_type: 'signature', source_type: getAlertSource(a) }))
         ];
 
         // Determine acknowledged status consistently
@@ -462,11 +517,6 @@
         const sortTs = (a) => a.triggered_at || a.created_at || a.hour_start || 0;
         alerts.sort((a, b) => new Date(sortTs(b)).getTime() - new Date(sortTs(a)).getTime());
 
-        if (!alerts || alerts.length === 0) {
-            container.innerHTML = '<div class="alert-item info"><div class="alert-content"><div class="alert-title">No Alerts</div><div class="alert-description">No alerts have been triggered.</div></div></div>';
-            return;
-        }
-
         // Filter locally for acknowledged (again if needed)
         let filteredAlerts = alerts;
         if (filter === 'acknowledged') {
@@ -474,48 +524,98 @@
         } else if (filter === 'active') {
             filteredAlerts = alerts.filter(a => !isAck(a));
         }
+        if (sourceFilter !== 'all') {
+            filteredAlerts = filteredAlerts.filter(a => (a.source_type || getAlertSource(a)) === sourceFilter);
+        }
+        if (participantFilter !== 'all') {
+            filteredAlerts = filteredAlerts.filter(a => (a.participant_id || a.participant_name || 'Unknown Participant') === participantFilter);
+        }
 
-        container.innerHTML = filteredAlerts.map(alert => {
-            const isGeofence = alert.alert_type === 'geofence';
-            const isSignature = alert.alert_type === 'signature';
+        const groupedAlerts = new Map();
+        const participantIds = new Set();
+        const includeEmptyParticipants = participantFilter === 'all';
 
-            const title = isGeofence
-                ? `Geofence Breach: ${alert.zone_name || 'Red Zone'}`
-                : `Signature Alert: ${alert.alert_code || ''} (${alert.severity || 'high'})`;
+        if (includeEmptyParticipants) {
+            (state.participants || []).forEach(participant => {
+                const participantId = participant.participant_id || participant.device_id;
+                if (!participantId) return;
+                participantIds.add(participantId);
+                groupedAlerts.set(participantId, []);
+            });
+        }
 
-            let desc;
-
-            if (isGeofence) {
-                desc = `Participant ${alert.participant_name || alert.participant_id} entered a red zone. Distance from center: ${Math.round(alert.distance)}m`;
-            } else {
-                const who = alert.participant_id || '--';
-                const name = alert.alert_name || '';
-                const expl = alert.explanation || '';
-                const score = alert.score ? `Score: ${alert.score.toFixed(4)}` : '';
-                desc = `Participant ${who}. ${name}${expl ? ' — ' + expl : ''} ${score}`;
+        filteredAlerts.forEach(alert => {
+            const participantId = alert.participant_id || alert.participant_name || 'Unknown Participant';
+            participantIds.add(participantId);
+            if (!groupedAlerts.has(participantId)) {
+                groupedAlerts.set(participantId, []);
             }
+            groupedAlerts.get(participantId).push(alert);
+        });
 
-            const acknowledged = isSignature ? !!alert.acknowledged_at : !!alert.acknowledged;
-            const ackText = acknowledged ? `| Acknowledged by ${alert.acknowledged_by || ''}` : '';
+        const participantGroups = Array.from(participantIds).map(participantId => {
+            const participantAlerts = groupedAlerts.get(participantId) || [];
+            const latestTs = participantAlerts.length > 0 ? sortTs(participantAlerts[0]) : 0;
+            return [participantId, participantAlerts, latestTs];
+        }).sort((a, b) => {
+            if ((b[1] || []).length !== (a[1] || []).length) {
+                return (b[1] || []).length - (a[1] || []).length;
+            }
+            return new Date(b[2] || 0).getTime() - new Date(a[2] || 0).getTime();
+        });
 
-            const ackBtn = (!acknowledged)
-                ? (isGeofence
-                    ? `<button class="btn btn-sm btn-primary" onclick="acknowledgeAlert('${alert.alert_id}')"><i style="margin-right: 5px;" class="fas fa-check"></i> Acknowledge</button>`
-                    : `<button class="btn btn-sm btn-primary" onclick="acknowledgeSignatureAlert(${alert.id})"><i style="margin-right: 5px;" class="fas fa-check"></i> Acknowledge</button>`
-                )
-                : '';
+        if (participantGroups.length === 0) {
+            container.innerHTML = '<div class="alert-item info"><div class="alert-content"><div class="alert-title">No Participants</div><div class="alert-description">No participants are available yet.</div></div></div>';
+            state.loadingAlerts = false;
+            return;
+        }
 
-            const shownTime = isSignature
-                ? (alert.created_at || alert.hour_start)
-                : alert.triggered_at;
+        container.innerHTML = participantGroups.map(([participantId, participantAlerts]) => {
+            const phoneCount = participantAlerts.filter(alert => (alert.source_type || getAlertSource(alert)) === 'phone').length;
+            const watchCount = participantAlerts.filter(alert => (alert.source_type || getAlertSource(alert)) === 'watch').length;
+            const participantBody = participantAlerts.map(alert => {
+                const isGeofence = alert.alert_type === 'geofence';
+                const isSignature = alert.alert_type === 'signature';
+                const sourceType = alert.source_type || getAlertSource(alert);
 
-            return `
+                const title = isGeofence
+                    ? `Geofence Breach: ${alert.zone_name || 'Red Zone'}`
+                    : `Signature Alert: ${alert.alert_code || ''} (${alert.severity || 'high'})`;
+
+                let desc;
+
+                if (isGeofence) {
+                    desc = `Participant ${alert.participant_name || alert.participant_id} entered a red zone. Distance from center: ${Math.round(alert.distance)}m`;
+                } else {
+                    const who = alert.participant_id || '--';
+                    const name = alert.alert_name || '';
+                    const expl = alert.explanation || '';
+                    const score = alert.score ? `Score: ${alert.score.toFixed(4)}` : '';
+                    desc = `Participant ${who}. ${name}${expl ? ' — ' + expl : ''} ${score}`;
+                }
+
+                const acknowledged = isSignature ? !!alert.acknowledged_at : !!alert.acknowledged;
+                const ackText = acknowledged ? `| Acknowledged by ${alert.acknowledged_by || ''}` : '';
+
+                const ackBtn = (!acknowledged)
+                    ? (isGeofence
+                        ? `<button class="btn btn-primary alert-ack-btn" onclick="acknowledgeAlert('${alert.alert_id}')"><i class="fas fa-check"></i><span>Acknowledge</span></button>`
+                        : `<button class="btn btn-primary alert-ack-btn" onclick="acknowledgeSignatureAlert(${alert.id})"><i class="fas fa-check"></i><span>Acknowledge</span></button>`
+                    )
+                    : '';
+
+                const shownTime = isSignature
+                    ? (alert.created_at || alert.hour_start)
+                    : alert.triggered_at;
+
+                return `
                 <div class="alert-item ${acknowledged ? 'info' : 'critical'}">
                     <div class="alert-icon">${acknowledged ? '<i class="fas fa-check"></i>' : '<i class="fas fa-exclamation"></i>'}</div>
                     <div class="alert-content">
                         <div class="alert-title">${title}</div>
                         <div class="alert-description">${desc}</div>
                         <div class="alert-meta">
+                            <span class="alert-source-badge ${sourceType}">${sourceType === 'watch' ? 'Watch' : 'Phone'}</span>
                             ${formatTimestamp(shownTime)} ${acknowledged ? ackText : ''}
                         </div>
                     </div>
@@ -524,7 +624,75 @@
                     </div>
                 </div>
             `;
+            }).join('') || `
+                <div class="participant-no-alerts">
+                    No ${sourceFilter === 'all' ? '' : sourceFilter + ' '}alerts for this participant in the current filter.
+                </div>
+            `;
+
+            return `
+                <div class="participant-alert-group">
+                    <div class="participant-alert-header">
+                        <div class="participant-alert-title">${participantId}</div>
+                        <div class="participant-alert-count">
+                            ${participantAlerts.length} alert${participantAlerts.length === 1 ? '' : 's'}
+                            <span class="participant-alert-breakdown">Phone: ${phoneCount} | Watch: ${watchCount}</span>
+                        </div>
+                    </div>
+                    <div class="participant-alert-body">
+                        ${participantBody}
+                    </div>
+                </div>
+            `;
         }).join('');
+        state.loadingAlerts = false;
+    }
+
+    function startAlertsLiveRefresh() {
+        if (state.alertsLiveInterval) return;
+        state.alertsLiveInterval = setInterval(() => {
+            if (state.currentView === 'alerts') {
+                loadAlertsList();
+            }
+        }, ALERTS_LIVE_REFRESH_MS);
+    }
+
+    function stopAlertsLiveRefresh() {
+        if (!state.alertsLiveInterval) return;
+        clearInterval(state.alertsLiveInterval);
+        state.alertsLiveInterval = null;
+    }
+
+    function getAlertSource(alert) {
+        if (alert.alert_type === 'geofence') return 'phone';
+        const code = (alert.alert_code || '').toUpperCase();
+        if (code.startsWith('W')) return 'watch';
+        return 'phone';
+    }
+
+    function updateAlertParticipantFilter() {
+        const participantFilter = document.getElementById('alert-participant-filter');
+        if (!participantFilter) return;
+
+        const previousValue = participantFilter.value || 'all';
+        const participantIds = Array.from(
+            new Set(
+                (state.participants || [])
+                    .map(participant => participant.participant_id || participant.device_id)
+                    .filter(Boolean)
+            )
+        ).sort();
+
+        participantFilter.innerHTML = [
+            '<option value="all">All Participants</option>',
+            ...participantIds.map(participantId => `<option value="${participantId}">${participantId}</option>`)
+        ].join('');
+
+        if (participantIds.includes(previousValue)) {
+            participantFilter.value = previousValue;
+        } else {
+            participantFilter.value = 'all';
+        }
     }
 
     // Global function for acknowledge geofence alert button
@@ -678,7 +846,7 @@
         const participants = await apiGet('/participants') || [];
 
         if (participants.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:#888;">No devices registered</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:#888;">No devices registered</td></tr>';
             return;
         }
 
@@ -686,11 +854,19 @@
             const batteryStr = p.percentage !== null && p.percentage !== undefined
                 ? `${Math.round(p.percentage)}% (${p.charging_status || 'unknown'})`
                 : '--';
+            const sourceType = (p.source_type || 'unknown').toLowerCase();
+            const sourceLabel = sourceType === 'both'
+                ? 'Phone + Watch'
+                : (sourceType === 'watch' ? 'Watch' : (sourceType === 'phone' ? 'Phone' : 'Unknown'));
+            const sourceBadgeClass = sourceType === 'both'
+                ? 'both'
+                : (sourceType === 'watch' ? 'watch' : 'phone');
 
             return `
                 <tr>
                     <td><code>${p.device_id}</code></td>
                     <td>${p.name}</td>
+                    <td><span class="alert-source-badge ${sourceBadgeClass}">${sourceLabel}</span></td>
                     <td>${formatTimestamp(p.updated_at) || 'Unknown'}</td>
                     <td id="battery-${p.device_id}">${batteryStr}</td>
                     <td>8</td>
@@ -720,6 +896,8 @@
                 const message = JSON.parse(event.data);
                 if (message.type === 'battery_update') {
                     updateBatteryUI(message.data);
+                } else if (message.type === 'alert_update') {
+                    scheduleAlertRefresh();
                 }
             } catch (e) {
                 console.error('Error parsing WebSocket message:', e);
@@ -751,6 +929,18 @@
                 el.style.fontWeight = '';
             }, 3000);
         }
+    }
+
+    function scheduleAlertRefresh() {
+        if (state.alertRefreshTimer) return;
+        state.alertRefreshTimer = setTimeout(async () => {
+            state.alertRefreshTimer = null;
+            if (!state.isAuthenticated) return;
+            await loadDashboardData();
+            if (state.currentView === 'alerts') {
+                await loadAlertsList();
+            }
+        }, 400);
     }
 
     // ---- USERS TABLE ----
@@ -792,8 +982,25 @@
 
     function formatTimestamp(timestamp) {
         if (!timestamp) return 'Unknown';
-        const date = new Date(timestamp);
+        let ts = timestamp;
+        // Vert.x MySQL driver returns TIMESTAMP/DATETIME as UTC
+        // ISO strings like "2026-03-06T10:03:59" without tz suffix.
+        // Treat them as UTC, then display in Asia/Qatar.
+        if (typeof ts === 'string') {
+            // Normalize space separator to T
+            if (!ts.includes('T')) {
+                ts = ts.replace(' ', 'T');
+            }
+            // If no timezone indicator, mark as UTC
+            if (!ts.endsWith('Z') && !/[+-]\d{2}:\d{2}$/.test(ts)) {
+                ts = ts + 'Z';
+            }
+        }
+        const date = new Date(ts);
+        if (isNaN(date.getTime())) return String(timestamp);
         return date.toLocaleString('en-US', {
+            timeZone: 'Asia/Qatar',
+            year: 'numeric',
             month: 'short',
             day: 'numeric',
             hour: '2-digit',

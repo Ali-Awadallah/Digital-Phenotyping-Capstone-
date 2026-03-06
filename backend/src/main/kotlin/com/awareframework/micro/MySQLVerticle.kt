@@ -2,9 +2,6 @@ package com.awareframework.micro
 
 import org.apache.commons.lang.StringEscapeUtils
 import io.github.oshai.kotlinlogging.KotlinLogging
-import io.vertx.config.ConfigRetriever
-import io.vertx.config.ConfigRetrieverOptions
-import io.vertx.config.ConfigStoreOptions
 import io.vertx.core.AbstractVerticle
 import io.vertx.core.Future
 import io.vertx.core.Promise
@@ -32,18 +29,9 @@ class MySQLVerticle : AbstractVerticle() {
   override fun start(startPromise: Promise<Void>?) {
     super.start(startPromise)
 
-    val configStore = ConfigStoreOptions()
-      .setType("file")
-      .setFormat("json")
-      .setConfig(JsonObject().put("path", "aware-config.json"))
-
-    val configRetrieverOptions = ConfigRetrieverOptions()
-      .addStore(configStore)
-      .setScanPeriod(5000)
-
     val eventBus = vertx.eventBus()
 
-    val configReader = ConfigRetriever.create(vertx, configRetrieverOptions)
+    val configReader = awareConfigRetriever(vertx)
     configReader.getConfig { config ->
       if (config.succeeded() && config.result().containsKey("server")) {
         parameters = config.result()
@@ -105,11 +93,14 @@ class MySQLVerticle : AbstractVerticle() {
 
         // ---- GEOFENCE ALERT SYSTEM TABLES AND HANDLERS ----
         
-        // Create geofence system tables on startup
+        // Create geofence and alert system tables on startup
         createParticipantsTable()
         createRedZonesTable()
         createGeofenceAlertsTable()
         createSignatureAlertsTable()
+        createSignatureAlertsArchiveTable()
+        createSignatureAlertsLegacyTable()
+        createAwareDbGeofenceAlertsTable()
 
         // ---- SENSOR DATA TABLES ----
         
@@ -130,6 +121,13 @@ class MySQLVerticle : AbstractVerticle() {
         createWearableWeightTable()
         createWearableOxygenTable()
         createWearableRespiratoryTable()
+
+        // ---- ANALYTICS / ENGINE TABLES ----
+        createAnomalyHoursTable()
+        createWatchDayProfilesTable()
+        createEngineStateTable()
+        createHourlyFeaturesTable()
+        createWearableDailyFeaturesTable()
 
         // Get all participants
         eventBus.consumer<JsonObject>("getParticipants") { receivedMessage ->
@@ -272,7 +270,13 @@ class MySQLVerticle : AbstractVerticle() {
         // Get signature alerts
         eventBus.consumer<JsonObject>("getSignatureAlerts") { receivedMessage ->
           val activeOnly = receivedMessage.body().getBoolean("active_only", false)
-          val limit = receivedMessage.body().getInteger("limit", 200)
+          val limitRaw = receivedMessage.body().getValue("limit")
+          val limit = when (limitRaw) {
+            null -> 10000
+            is Number -> limitRaw.toInt()
+            is String -> if (limitRaw.equals("all", ignoreCase = true)) null else limitRaw.toIntOrNull() ?: 10000
+            else -> 10000
+          }
           getSignatureAlerts(activeOnly, limit).onComplete { response ->
             if (response.succeeded()) {
               receivedMessage.reply(response.result())
@@ -630,23 +634,88 @@ class MySQLVerticle : AbstractVerticle() {
         val connection = connectionResult.result()
         val query = """
           CREATE TABLE IF NOT EXISTS `participants` (
-            `participant_id` VARCHAR(36) PRIMARY KEY,
+            `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            `participant_id` VARCHAR(128) NOT NULL,
             `device_id` VARCHAR(128) NOT NULL UNIQUE,
+            `device_type` VARCHAR(32) NOT NULL DEFAULT 'unknown',
             `name` VARCHAR(100) NOT NULL,
             `red_zone_radius` INT DEFAULT 300,
             `status` ENUM('active', 'inactive') DEFAULT 'active',
             `risk_level` ENUM('low', 'moderate', 'high') DEFAULT 'low',
             `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX `idx_participant_id` (`participant_id`),
             INDEX `idx_device` (`device_id`),
             INDEX `idx_status` (`status`)
           )
         """.trimIndent()
         connection.query(query).execute()
           .onSuccess {
-            logger.info { "Created participants table" }
-            promise.complete(true)
-            connection.close()
+            connection
+              .query("SHOW COLUMNS FROM participants LIKE 'id'")
+              .execute()
+              .onSuccess { idRows ->
+                val ensureIdFuture = if (idRows.size() == 0) {
+                  connection.query(
+                    """
+                    ALTER TABLE participants
+                      DROP PRIMARY KEY,
+                      ADD COLUMN id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY FIRST
+                    """.trimIndent()
+                  ).execute()
+                } else {
+                  Future.succeededFuture()
+                }
+
+                ensureIdFuture
+                  .compose {
+                    connection.query("ALTER TABLE participants MODIFY COLUMN participant_id VARCHAR(128) NOT NULL").execute()
+                  }
+                  .compose {
+                    connection.query("SHOW COLUMNS FROM participants LIKE 'device_type'").execute()
+                  }
+                  .compose { deviceTypeRows ->
+                    if (deviceTypeRows.size() == 0) {
+                      connection.query("ALTER TABLE participants ADD COLUMN device_type VARCHAR(32) NOT NULL DEFAULT 'unknown' AFTER device_id").execute()
+                    } else {
+                      Future.succeededFuture()
+                    }
+                  }
+                  .compose {
+                    connection.query(
+                      """
+                      DELETE p1
+                      FROM participants p1
+                      INNER JOIN participants p2
+                        ON p1.device_id = p2.device_id
+                       AND p1.id < p2.id
+                      """.trimIndent()
+                    ).execute().recover { Future.succeededFuture() }
+                  }
+                  .compose {
+                    connection.query("CREATE UNIQUE INDEX ux_participants_device_id ON participants(device_id)").execute()
+                      .recover { Future.succeededFuture() }
+                  }
+                  .compose {
+                    connection.query("CREATE INDEX idx_participant_id ON participants(participant_id)").execute()
+                      .recover { Future.succeededFuture() }
+                  }
+                  .onSuccess {
+                    logger.info { "Created/migrated participants table" }
+                    promise.complete(true)
+                    connection.close()
+                  }
+                  .onFailure { e ->
+                    logger.error(e) { "Failed to migrate participants table" }
+                    promise.fail(e.message)
+                    connection.close()
+                  }
+              }
+              .onFailure { e ->
+                logger.error(e) { "Failed to inspect participants table" }
+                promise.fail(e.message)
+                connection.close()
+              }
           }
           .onFailure { e ->
             logger.error(e) { "Failed to create participants table" }
@@ -785,6 +854,205 @@ class MySQLVerticle : AbstractVerticle() {
       }
     }
     return promise.future()
+  }
+
+  private fun createTableWithQuery(tableName: String, query: String): Future<Boolean> {
+    val promise = Promise.promise<Boolean>()
+    sqlClient.getConnection { connectionResult ->
+      if (connectionResult.succeeded()) {
+        val connection = connectionResult.result()
+        connection.query(query).execute()
+          .onSuccess {
+            logger.info { "Created $tableName table (if missing)" }
+            promise.complete(true)
+            connection.close()
+          }
+          .onFailure { e ->
+            logger.error(e) { "Failed to create $tableName table" }
+            promise.fail(e.message)
+            connection.close()
+          }
+      } else {
+        promise.fail(connectionResult.cause().message)
+      }
+    }
+    return promise.future()
+  }
+
+  fun createSignatureAlertsArchiveTable(): Future<Boolean> {
+    val query = """
+      CREATE TABLE IF NOT EXISTS `signature_alerts_archive` (
+        `id` BIGINT NOT NULL AUTO_INCREMENT,
+        `participant_id` VARCHAR(36) NOT NULL,
+        `hour_start` DATETIME NOT NULL,
+        `alert_code` VARCHAR(32) NOT NULL,
+        `alert_name` VARCHAR(255) DEFAULT NULL,
+        `severity` VARCHAR(16) DEFAULT NULL,
+        `score` DOUBLE DEFAULT NULL,
+        `baseline_ref` VARCHAR(64) DEFAULT NULL,
+        `top_features_json` JSON DEFAULT NULL,
+        `explanation` TEXT,
+        `status` VARCHAR(32) DEFAULT 'active',
+        `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        `acknowledged_at` TIMESTAMP NULL DEFAULT NULL,
+        `acknowledged_by` VARCHAR(100) DEFAULT NULL,
+        `hour_start_iso` VARCHAR(32) DEFAULT NULL,
+        `hour_start_ts` BIGINT DEFAULT NULL,
+        PRIMARY KEY (`id`),
+        UNIQUE KEY `uniq_alert` (`participant_id`, `hour_start`, `alert_code`),
+        KEY `idx_sa_participant` (`participant_id`),
+        KEY `idx_sa_created` (`created_at`),
+        KEY `idx_sa_status` (`status`),
+        KEY `idx_sa_ack` (`acknowledged_at`)
+      )
+    """.trimIndent()
+    return createTableWithQuery("signature_alerts_archive", query)
+  }
+
+  fun createSignatureAlertsLegacyTable(): Future<Boolean> {
+    val query = """
+      CREATE TABLE IF NOT EXISTS `signature_alerts_legacy` (
+        `id` BIGINT NOT NULL AUTO_INCREMENT,
+        `participant_id` VARCHAR(36) NOT NULL,
+        `hour_start` DATETIME NOT NULL,
+        `alert_code` VARCHAR(32) NOT NULL,
+        `alert_name` VARCHAR(255) DEFAULT NULL,
+        `severity` VARCHAR(16) DEFAULT NULL,
+        `score` DOUBLE DEFAULT NULL,
+        `baseline_ref` VARCHAR(64) DEFAULT NULL,
+        `top_features_json` JSON DEFAULT NULL,
+        `explanation` TEXT,
+        `status` VARCHAR(32) DEFAULT 'active',
+        `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        `acknowledged_at` TIMESTAMP NULL DEFAULT NULL,
+        `acknowledged_by` VARCHAR(100) DEFAULT NULL,
+        `hour_start_iso` VARCHAR(32) DEFAULT NULL,
+        `hour_start_ts` BIGINT DEFAULT NULL,
+        PRIMARY KEY (`id`),
+        UNIQUE KEY `uniq_alert` (`participant_id`, `hour_start`, `alert_code`),
+        KEY `idx_sa_participant` (`participant_id`),
+        KEY `idx_sa_created` (`created_at`),
+        KEY `idx_sa_status` (`status`),
+        KEY `idx_sa_ack` (`acknowledged_at`)
+      )
+    """.trimIndent()
+    return createTableWithQuery("signature_alerts_legacy", query)
+  }
+
+  fun createAwareDbGeofenceAlertsTable(): Future<Boolean> {
+    val query = """
+      CREATE TABLE IF NOT EXISTS `aware_db_geofence_alerts` (
+        `Column1` VARCHAR(50) DEFAULT NULL
+      )
+    """.trimIndent()
+    return createTableWithQuery("aware_db_geofence_alerts", query)
+  }
+
+  fun createAnomalyHoursTable(): Future<Boolean> {
+    val query = """
+      CREATE TABLE IF NOT EXISTS `anomaly_hours` (
+        `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+        `device_id` VARCHAR(128) NOT NULL,
+        `hour_start_ts` BIGINT NOT NULL,
+        `hour_start_utc` VARCHAR(32) NOT NULL,
+        `anomaly_type` VARCHAR(32) NOT NULL,
+        `created_at` TEXT NOT NULL,
+        INDEX `idx_device` (`device_id`),
+        INDEX `idx_hour_start_ts` (`hour_start_ts`),
+        INDEX `idx_anom_dev_hour` (`device_id`, `hour_start_ts`)
+      )
+    """.trimIndent()
+    return createTableWithQuery("anomaly_hours", query)
+  }
+
+  fun createWatchDayProfilesTable(): Future<Boolean> {
+    val query = """
+      CREATE TABLE IF NOT EXISTS `watch_day_profiles` (
+        `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+        `device_id` VARCHAR(128) NOT NULL,
+        `day_start` BIGINT NOT NULL,
+        `profile` VARCHAR(32) NOT NULL,
+        `created_at` TEXT NOT NULL,
+        INDEX `idx_device` (`device_id`),
+        INDEX `idx_day_start` (`day_start`)
+      )
+    """.trimIndent()
+    return createTableWithQuery("watch_day_profiles", query)
+  }
+
+  fun createEngineStateTable(): Future<Boolean> {
+    val query = """
+      CREATE TABLE IF NOT EXISTS `engine_state` (
+        `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+        `participant_id` VARCHAR(128) NOT NULL,
+        `engine_name` VARCHAR(128) NOT NULL,
+        `last_processed_hour_start` DATETIME NULL,
+        `last_processed_day_start` DATETIME NULL,
+        `last_trained_hour_start` DATETIME NULL,
+        `threshold` DOUBLE NULL,
+        `updated_at` DATETIME NOT NULL,
+        UNIQUE KEY `uq_engine_state` (`participant_id`, `engine_name`)
+      )
+    """.trimIndent()
+    return createTableWithQuery("engine_state", query)
+  }
+
+  fun createHourlyFeaturesTable(): Future<Boolean> {
+    val query = """
+      CREATE TABLE IF NOT EXISTS `hourly_features` (
+        `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+        `participant_id` VARCHAR(128) NOT NULL,
+        `hour_start` DATETIME NOT NULL,
+        `accel_n` INT NULL,
+        `gyro_n` INT NULL,
+        `gps_n` INT NULL,
+        `screen_event_n` INT NULL,
+        `acc_mag_mean` DOUBLE NULL,
+        `acc_mag_std` DOUBLE NULL,
+        `acc_jerk_mean` DOUBLE NULL,
+        `acc_mag_p95` DOUBLE NULL,
+        `acc_inactive_ratio` DOUBLE NULL,
+        `gyro_mag_mean` DOUBLE NULL,
+        `gyro_mag_std` DOUBLE NULL,
+        `gyro_mag_p95` DOUBLE NULL,
+        `gps_points` INT NULL,
+        `gps_mean_accuracy` DOUBLE NULL,
+        `gps_distance_m` DOUBLE NULL,
+        `gps_stationary_ratio` DOUBLE NULL,
+        `screen_on_events` INT NULL,
+        `screen_off_events` INT NULL,
+        `screen_sessions` INT NULL,
+        `screen_on_seconds` DOUBLE NULL,
+        `screen_avg_session_seconds` DOUBLE NULL,
+        UNIQUE KEY `uq_hourly_features` (`participant_id`, `hour_start`),
+        KEY `idx_hourly_features_hour_start` (`hour_start`)
+      )
+    """.trimIndent()
+    return createTableWithQuery("hourly_features", query)
+  }
+
+  fun createWearableDailyFeaturesTable(): Future<Boolean> {
+    val query = """
+      CREATE TABLE IF NOT EXISTS `wearable_daily_features` (
+        `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+        `participant_id` VARCHAR(128) NOT NULL,
+        `day_start` DATETIME NOT NULL,
+        `steps_total` DOUBLE NULL,
+        `sleep_minutes` DOUBLE NULL,
+        `sleep_episode_n` INT NULL,
+        `sleep_start_hour` DOUBLE NULL,
+        `sleep_end_hour` DOUBLE NULL,
+        `sleep_midpoint_hour` DOUBLE NULL,
+        `day_hr_mean` DOUBLE NULL,
+        `night_hr_mean` DOUBLE NULL,
+        `resting_hr_p10` DOUBLE NULL,
+        `rmssd_night` DOUBLE NULL,
+        `sdnn_night` DOUBLE NULL,
+        UNIQUE KEY `uq_wearable_daily_features` (`participant_id`, `day_start`),
+        KEY `idx_wearable_daily_day_start` (`day_start`)
+      )
+    """.trimIndent()
+    return createTableWithQuery("wearable_daily_features", query)
   }
 
   // ---- SENSOR DATA TABLE CREATION ----
@@ -1083,9 +1351,41 @@ class MySQLVerticle : AbstractVerticle() {
         """.trimIndent()
         connection.query(query).execute()
           .onSuccess {
-            logger.info { "Created location table" }
-            promise.complete(true)
-            connection.close()
+            connection.query("SHOW COLUMNS FROM location LIKE 'coordinates'").execute()
+              .onSuccess { coordinateRows ->
+                val normalizeCoordinates = if (coordinateRows.size() > 0) {
+                  connection.query("ALTER TABLE location MODIFY COLUMN coordinates JSON NULL").execute()
+                } else {
+                  Future.succeededFuture()
+                }
+
+                normalizeCoordinates
+                  .compose {
+                    connection.query("SHOW COLUMNS FROM location LIKE 'created_at'").execute()
+                  }
+                  .compose { createdAtRows ->
+                    if (createdAtRows.size() > 0) {
+                      connection.query("ALTER TABLE location MODIFY COLUMN created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP").execute()
+                    } else {
+                      Future.succeededFuture()
+                    }
+                  }
+                  .onSuccess {
+                    logger.info { "Created/migrated location table" }
+                    promise.complete(true)
+                    connection.close()
+                  }
+                  .onFailure { e ->
+                    logger.error(e) { "Failed to migrate location table" }
+                    promise.fail(e.message)
+                    connection.close()
+                  }
+              }
+              .onFailure { e ->
+                logger.error(e) { "Failed to inspect location table" }
+                promise.fail(e.message)
+                connection.close()
+              }
           }
           .onFailure { e ->
             logger.error(e) { "Failed to create location table" }
@@ -1178,11 +1478,13 @@ class MySQLVerticle : AbstractVerticle() {
   fun insertLocation(data: JsonObject): Future<Boolean> {
     val promise = Promise.promise<Boolean>()
     val deviceId = data.getString("device_id")
-    val timestamp = data.getLong("timestamp")
-    val latitude = data.getDouble("latitude")
-    val longitude = data.getDouble("longitude")
-    val altitude = data.getDouble("altitude")
-    val accuracy = data.getDouble("accuracy")
+    val timestamp = getLongValue(data, "timestamp", "ts") ?: System.currentTimeMillis()
+    val latitude = getDoubleValue(data, "latitude", "lat")
+      ?: return Future.failedFuture("latitude is required")
+    val longitude = getDoubleValue(data, "longitude", "lon", "lng")
+      ?: return Future.failedFuture("longitude is required")
+    val altitude = getDoubleValue(data, "altitude") ?: 0.0
+    val accuracy = getDoubleValue(data, "accuracy", "horizontal_accuracy") ?: 0.0
     val utcTime = java.time.Instant.ofEpochMilli(timestamp)
       .atZone(java.time.ZoneOffset.UTC)
       .toLocalDateTime()
@@ -1192,8 +1494,8 @@ class MySQLVerticle : AbstractVerticle() {
       if (connectionResult.succeeded()) {
         val connection = connectionResult.result()
         val query = """
-          INSERT INTO `location` (`device_id`, `timestamp`, `utc_time`, `latitude`, `longitude`, `altitude`, `accuracy`)
-          VALUES ('$deviceId', $timestamp, '$utcTime', $latitude, $longitude, $altitude, $accuracy)
+          INSERT INTO `location` (`device_id`, `timestamp`, `utc_time`, `latitude`, `longitude`, `altitude`, `accuracy`, `created_at`)
+          VALUES ('$deviceId', $timestamp, '$utcTime', $latitude, $longitude, $altitude, $accuracy, NOW())
         """.trimIndent()
         connection.query(query).execute()
           .onSuccess {
@@ -1211,6 +1513,28 @@ class MySQLVerticle : AbstractVerticle() {
       }
     }
     return promise.future()
+  }
+
+  private fun getLongValue(data: JsonObject, vararg keys: String): Long? {
+    for (key in keys) {
+      val value = data.getValue(key) ?: continue
+      when (value) {
+        is Number -> return value.toLong()
+        is String -> value.toLongOrNull()?.let { return it }
+      }
+    }
+    return null
+  }
+
+  private fun getDoubleValue(data: JsonObject, vararg keys: String): Double? {
+    for (key in keys) {
+      val value = data.getValue(key) ?: continue
+      when (value) {
+        is Number -> return value.toDouble()
+        is String -> value.toDoubleOrNull()?.let { return it }
+      }
+    }
+    return null
   }
 
   fun insertNotification(data: JsonObject): Future<Boolean> {
@@ -1289,10 +1613,53 @@ class MySQLVerticle : AbstractVerticle() {
       if (connectionResult.succeeded()) {
         val connection = connectionResult.result()
         val query = """
-          SELECT p.*, b.percentage, b.charging_status 
-          FROM participants p 
-          LEFT JOIN battery_readings b ON p.device_id = b.device_id 
-          AND b.timestamp = (SELECT MAX(timestamp) FROM battery_readings b2 WHERE b2.device_id = p.device_id) 
+          SELECT
+            p.*,
+            b.percentage,
+            b.charging_status,
+            CASE
+              WHEN LOWER(COALESCE(p.device_type, '')) IN ('phone', 'watch') THEN LOWER(p.device_type)
+              WHEN phone_data.has_phone = 1 AND watch_data.has_watch = 1 THEN 'both'
+              WHEN phone_data.has_phone = 1 THEN 'phone'
+              WHEN watch_data.has_watch = 1 THEN 'watch'
+              ELSE 'unknown'
+            END AS source_type
+          FROM participants p
+          LEFT JOIN (
+            SELECT br.device_id, br.percentage, br.charging_status
+            FROM battery_readings br
+            INNER JOIN (
+              SELECT device_id, MAX(id) AS max_id
+              FROM battery_readings
+              GROUP BY device_id
+            ) latest_battery ON latest_battery.max_id = br.id
+          ) b ON p.device_id = b.device_id
+          LEFT JOIN (
+            SELECT device_id, 1 AS has_phone
+            FROM (
+              SELECT DISTINCT device_id FROM accelerometer
+              UNION
+              SELECT DISTINCT device_id FROM gyroscope
+              UNION
+              SELECT DISTINCT device_id FROM location
+              UNION
+              SELECT DISTINCT device_id FROM screen_events
+            ) phone_sources
+          ) phone_data ON p.device_id = phone_data.device_id
+          LEFT JOIN (
+            SELECT device_id, 1 AS has_watch
+            FROM (
+              SELECT DISTINCT device_id FROM wearable_heart_rate
+              UNION
+              SELECT DISTINCT device_id FROM wearable_steps
+              UNION
+              SELECT DISTINCT device_id FROM wearable_sleep
+              UNION
+              SELECT DISTINCT device_id FROM wearable_oxygen
+              UNION
+              SELECT DISTINCT device_id FROM wearable_respiratory
+            ) watch_sources
+          ) watch_data ON p.device_id = watch_data.device_id
           ORDER BY p.name ASC
         """.trimIndent()
         connection.query(query).execute()
@@ -1342,6 +1709,7 @@ class MySQLVerticle : AbstractVerticle() {
     val promise = Promise.promise<String>()
     val participantId = data.getString("participant_id") ?: java.util.UUID.randomUUID().toString()
     val deviceId = data.getString("device_id")
+    val deviceType = data.getString("device_type", "unknown")
     val name = data.getString("name", "Unknown")
     val redZoneRadius = data.getInteger("red_zone_radius", 300)
     val status = data.getString("status", "active")
@@ -1351,13 +1719,15 @@ class MySQLVerticle : AbstractVerticle() {
       if (connectionResult.succeeded()) {
         val connection = connectionResult.result()
         val query = """
-          INSERT INTO participants (participant_id, device_id, name, red_zone_radius, status, risk_level)
-          VALUES ('$participantId', '$deviceId', '$name', $redZoneRadius, '$status', '$riskLevel')
+          INSERT INTO participants (participant_id, device_id, device_type, name, red_zone_radius, status, risk_level, created_at, updated_at)
+          VALUES ('$participantId', '$deviceId', '$deviceType', '$name', $redZoneRadius, '$status', '$riskLevel', NOW(), NOW())
           ON DUPLICATE KEY UPDATE
+            device_type = VALUES(device_type),
             name = VALUES(name),
             red_zone_radius = VALUES(red_zone_radius),
             status = VALUES(status),
-            risk_level = VALUES(risk_level)
+            risk_level = VALUES(risk_level),
+            updated_at = NOW()
         """.trimIndent()
         connection.query(query).execute()
           .onSuccess {
@@ -1524,6 +1894,14 @@ class MySQLVerticle : AbstractVerticle() {
         connection.query(query).execute()
           .onSuccess {
             logger.info { "Inserted geofence alert: $alertId for participant $participantId" }
+            vertx.eventBus().publish(
+              "alerts.changed",
+              JsonObject()
+                .put("action", "insert")
+                .put("alert_type", "geofence")
+                .put("alert_id", alertId)
+                .put("participant_id", participantId)
+            )
             promise.complete(alertId)
             connection.close()
           }
@@ -1554,6 +1932,14 @@ class MySQLVerticle : AbstractVerticle() {
         connection.query(query).execute()
           .onSuccess {
             logger.info { "Acknowledged alert: $alertId by $safeBy" }
+            vertx.eventBus().publish(
+              "alerts.changed",
+              JsonObject()
+                .put("action", "acknowledge")
+                .put("alert_type", "geofence")
+                .put("alert_id", alertId)
+                .put("acknowledged_by", safeBy)
+            )
             promise.complete(true)
             connection.close()
           }
@@ -1879,8 +2265,8 @@ class MySQLVerticle : AbstractVerticle() {
       if (connectionResult.succeeded()) {
         val connection = connectionResult.result()
         val query = """
-          INSERT INTO wearable_heart_rate (device_id, timestamp, bpm)
-          VALUES ('$deviceId', $timestamp, $bpm)
+          INSERT INTO wearable_heart_rate (device_id, timestamp, bpm, created_at)
+          VALUES ('$deviceId', $timestamp, $bpm, NOW())
         """.trimIndent()
         connection.query(query).execute()
           .onSuccess {
@@ -1912,8 +2298,8 @@ class MySQLVerticle : AbstractVerticle() {
       if (connectionResult.succeeded()) {
         val connection = connectionResult.result()
         val query = """
-          INSERT INTO wearable_steps (device_id, start_time, end_time, count)
-          VALUES ('$deviceId', $startTime, $endTime, $count)
+          INSERT INTO wearable_steps (device_id, start_time, end_time, count, created_at)
+          VALUES ('$deviceId', $startTime, $endTime, $count, NOW())
         """.trimIndent()
         connection.query(query).execute()
           .onSuccess {
@@ -1946,8 +2332,8 @@ class MySQLVerticle : AbstractVerticle() {
       if (connectionResult.succeeded()) {
         val connection = connectionResult.result()
         val query = """
-          INSERT INTO wearable_sleep (device_id, start_time, end_time, title, notes)
-          VALUES ('$deviceId', $startTime, $endTime, '$title', '$notes')
+          INSERT INTO wearable_sleep (device_id, start_time, end_time, title, notes, created_at)
+          VALUES ('$deviceId', $startTime, $endTime, '$title', '$notes', NOW())
         """.trimIndent()
         connection.query(query).execute()
           .onSuccess {
@@ -1979,8 +2365,8 @@ class MySQLVerticle : AbstractVerticle() {
       if (connectionResult.succeeded()) {
         val connection = connectionResult.result()
         val query = """
-          INSERT INTO wearable_blood_pressure (device_id, timestamp, systolic, diastolic)
-          VALUES ('$deviceId', $timestamp, $systolic, $diastolic)
+          INSERT INTO wearable_blood_pressure (device_id, timestamp, systolic, diastolic, created_at)
+          VALUES ('$deviceId', $timestamp, $systolic, $diastolic, NOW())
         """.trimIndent()
         connection.query(query).execute()
           .onSuccess {
@@ -2011,8 +2397,8 @@ class MySQLVerticle : AbstractVerticle() {
       if (connectionResult.succeeded()) {
         val connection = connectionResult.result()
         val query = """
-          INSERT INTO wearable_weight (device_id, timestamp, weight_kg)
-          VALUES ('$deviceId', $timestamp, $weightKg)
+          INSERT INTO wearable_weight (device_id, timestamp, weight_kg, created_at)
+          VALUES ('$deviceId', $timestamp, $weightKg, NOW())
         """.trimIndent()
         connection.query(query).execute()
           .onSuccess {
@@ -2043,8 +2429,8 @@ class MySQLVerticle : AbstractVerticle() {
       if (connectionResult.succeeded()) {
         val connection = connectionResult.result()
         val query = """
-          INSERT INTO wearable_oxygen (device_id, timestamp, percentage)
-          VALUES ('$deviceId', $timestamp, $percentage)
+          INSERT INTO wearable_oxygen (device_id, timestamp, percentage, created_at)
+          VALUES ('$deviceId', $timestamp, $percentage, NOW())
         """.trimIndent()
         connection.query(query).execute()
           .onSuccess {
@@ -2075,8 +2461,8 @@ class MySQLVerticle : AbstractVerticle() {
       if (connectionResult.succeeded()) {
         val connection = connectionResult.result()
         val query = """
-          INSERT INTO wearable_respiratory (device_id, timestamp, rate)
-          VALUES ('$deviceId', $timestamp, $rate)
+          INSERT INTO wearable_respiratory (device_id, timestamp, rate, created_at)
+          VALUES ('$deviceId', $timestamp, $rate, NOW())
         """.trimIndent()
         connection.query(query).execute()
           .onSuccess {
@@ -2102,13 +2488,18 @@ class MySQLVerticle : AbstractVerticle() {
   /**
    * Get signature alerts, optionally only active (unacknowledged) ones
    */
-  fun getSignatureAlerts(activeOnly: Boolean, limit: Int): Future<JsonArray> {
+  fun getSignatureAlerts(activeOnly: Boolean, limit: Int?): Future<JsonArray> {
     val promise = Promise.promise<JsonArray>()
     sqlClient.getConnection { connectionResult ->
       if (connectionResult.succeeded()) {
         val connection = connectionResult.result()
         val whereClause = if (activeOnly) "WHERE acknowledged_at IS NULL" else ""
-        val safeLimit = if (limit <= 0) 200 else minOf(limit, 1000)
+        val limitClause = if (limit == null) {
+          ""
+        } else {
+          val safeLimit = if (limit <= 0) 200 else minOf(limit, 10000)
+          "\nLIMIT $safeLimit"
+        }
 
         val query = """
           SELECT
@@ -2118,7 +2509,7 @@ class MySQLVerticle : AbstractVerticle() {
           FROM signature_alerts
           $whereClause
           ORDER BY created_at DESC
-          LIMIT $safeLimit
+          $limitClause
         """.trimIndent()
 
         connection.query(query).execute()
@@ -2164,6 +2555,14 @@ class MySQLVerticle : AbstractVerticle() {
         connection.query(query).execute()
           .onSuccess {
             logger.info { "Acknowledged signature alert: $id by $safeBy" }
+            vertx.eventBus().publish(
+              "alerts.changed",
+              JsonObject()
+                .put("action", "acknowledge")
+                .put("alert_type", "signature")
+                .put("id", id)
+                .put("acknowledged_by", safeBy)
+            )
             promise.complete(true)
             connection.close()
           }

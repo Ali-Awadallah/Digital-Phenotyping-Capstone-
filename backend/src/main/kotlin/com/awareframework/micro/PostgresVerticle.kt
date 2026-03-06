@@ -2,9 +2,6 @@ package com.awareframework.micro
 
 import org.apache.commons.lang.StringEscapeUtils
 import io.github.oshai.kotlinlogging.KotlinLogging
-import io.vertx.config.ConfigRetriever
-import io.vertx.config.ConfigRetrieverOptions
-import io.vertx.config.ConfigStoreOptions
 import io.vertx.core.AbstractVerticle
 import io.vertx.core.Future
 import io.vertx.core.Promise
@@ -30,18 +27,9 @@ class PostgresVerticle : AbstractVerticle() {
   override fun start(startPromise: Promise<Void>?) {
     super.start(startPromise)
 
-    val configStore = ConfigStoreOptions()
-      .setType("file")
-      .setFormat("json")
-      .setConfig(JsonObject().put("path", "aware-config.json"))
-
-    val configRetrieverOptions = ConfigRetrieverOptions()
-      .addStore(configStore)
-      .setScanPeriod(5000)
-
     val eventBus = vertx.eventBus()
 
-    val configReader = ConfigRetriever.create(vertx, configRetrieverOptions)
+    val configReader = awareConfigRetriever(vertx)
     configReader.getConfig { config ->
       if (config.succeeded() && config.result().containsKey("server")) {
         parameters = config.result()

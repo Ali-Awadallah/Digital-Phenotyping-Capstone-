@@ -2,9 +2,6 @@ package com.awareframework.micro
 
 import com.mitchellbosecke.pebble.PebbleEngine
 import io.github.oshai.kotlinlogging.KotlinLogging
-import io.vertx.config.ConfigRetriever
-import io.vertx.config.ConfigRetrieverOptions
-import io.vertx.config.ConfigStoreOptions
 import io.vertx.core.AbstractVerticle
 import io.vertx.core.Promise
 import io.vertx.core.buffer.Buffer
@@ -70,20 +67,11 @@ class MainVerticle : AbstractVerticle() {
     // Serve static dashboard files
     router.route("/static/*").handler(StaticHandler.create("static").setCachingEnabled(false))
     router.route().handler {
-      logger.info { "Processing ${it.request().scheme()} ${it.request().method()} : ${it.request().path()} with the following data ${it.request().params().toList()}" }
+      logger.info { "Processing ${it.request().method()} ${it.request().path()}" }
       it.next()
     }
 
-    val configJsonFile = ConfigStoreOptions()
-      .setType("file")
-      .setFormat("json")
-      .setConfig(JsonObject().put("path", "./aware-config.json"))
-
-    val configRetrieverOptions = ConfigRetrieverOptions()
-      .setScanPeriod(5000)
-      .addStore(configJsonFile)
-
-    val configReader = ConfigRetriever.create(vertx, configRetrieverOptions)
+    val configReader = awareConfigRetriever(vertx)
     configReader.getConfig { config ->
 
       if (config.succeeded() && config.result().containsKey("server")) {
@@ -108,7 +96,7 @@ class MainVerticle : AbstractVerticle() {
         // POST /api/events  { device_id, ts, value }  -> insert via event bus
         api.post("/events").handler { ctx ->
           try {
-            val body = ctx.bodyAsJson
+            val body = requireJsonBody(ctx)
             val deviceId = body.getString("device_id") ?: "unknown"
             val ts = body.getLong("ts") ?: System.currentTimeMillis()
             val value = body.getString("value") ?: ""
@@ -161,7 +149,7 @@ class MainVerticle : AbstractVerticle() {
         // POST /api/battery  -> receive real battery reading from app, store in DB
         api.post("/battery").handler { ctx ->
           try {
-            val body = ctx.bodyAsJson
+            val body = requireJsonBody(ctx)
 
             val deviceId = body.getString("device_id") ?: "unknown"
             val percentage = body.getDouble("percentage")
@@ -176,31 +164,18 @@ class MainVerticle : AbstractVerticle() {
               .put("percentage", percentage)
               .put("charging_status", chargingStatus)
               .put("timestamp", ts)
-            
-            vertx.eventBus().request<JsonObject>("insertBatteryReading", batteryData) { ar ->
-              if (ar.succeeded()) {
-                ctx.response()
-                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode())
-              } else {
-                logger.error(ar.cause()) { "Failed to store battery reading" }
-                ctx.response()
-                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode()) // Still return OK to app
-              }
-            }
+
+            requestAndReplyOk(ctx, "insertBatteryReading", batteryData, "Failed to store battery reading")
           } catch (e: Exception) {
             logger.error(e) { "Error handling /api/battery" }
-            ctx.response()
-              .setStatusCode(400)
-              .end(JsonObject().put("error", e.message).encode())
+            respondError(ctx, 400, e.message)
           }
         }
 
         // POST /api/screen  -> receive real screen state from app, store in DB
         api.post("/screen").handler { ctx ->
           try {
-            val body = ctx.bodyAsJson
+            val body = requireJsonBody(ctx)
 
             val deviceId = body.getString("device_id") ?: "unknown"
             val state = body.getString("state") ?: "UNKNOWN" // "ON" or "OFF" (approx)
@@ -213,31 +188,18 @@ class MainVerticle : AbstractVerticle() {
               .put("device_id", deviceId)
               .put("state", state)
               .put("timestamp", ts)
-            
-            vertx.eventBus().request<JsonObject>("insertScreenEvent", screenData) { ar ->
-              if (ar.succeeded()) {
-                ctx.response()
-                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode())
-              } else {
-                logger.error(ar.cause()) { "Failed to store screen event" }
-                ctx.response()
-                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode()) // Still return OK to app
-              }
-            }
+
+            requestAndReplyOk(ctx, "insertScreenEvent", screenData, "Failed to store screen event")
           } catch (e: Exception) {
             logger.error(e) { "Error handling /api/screen" }
-            ctx.response()
-              .setStatusCode(400)
-              .end(JsonObject().put("error", e.message).encode())
+            respondError(ctx, 400, e.message)
           }
         }
 
         // POST /api/notification  -> receive notification from app, store in DB
         api.post("/notification").handler { ctx ->
           try {
-            val body = ctx.bodyAsJson
+            val body = requireJsonBody(ctx)
 
             val deviceId = body.getString("device_id") ?: "unknown"
             val appName = body.getString("app_name", "")
@@ -260,31 +222,18 @@ class MainVerticle : AbstractVerticle() {
               .put("kind", kind)
               .put("timestamp", ts)
               .put("dismissed_at", dismissedAt)
-            
-            vertx.eventBus().request<JsonObject>("insertNotification", notificationData) { ar ->
-              if (ar.succeeded()) {
-                ctx.response()
-                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode())
-              } else {
-                logger.error(ar.cause()) { "Failed to store notification" }
-                ctx.response()
-                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode()) // Still return OK to app
-              }
-            }
+
+            requestAndReplyOk(ctx, "insertNotification", notificationData, "Failed to store notification")
           } catch (e: Exception) {
             logger.error(e) { "Error handling /api/notification" }
-            ctx.response()
-              .setStatusCode(400)
-              .end(JsonObject().put("error", e.message).encode())
+            respondError(ctx, 400, e.message)
           }
         }
 
         // POST /api/gyroscope
         api.post("/gyroscope").handler { ctx ->
           try {
-            val body = ctx.bodyAsJson
+            val body = requireJsonBody(ctx)
             val deviceId = body.getString("device_id") ?: "unknown"
             val ts = body.getLong("ts")
             val x = body.getDouble("x")
@@ -300,30 +249,17 @@ class MainVerticle : AbstractVerticle() {
               .put("y", y)
               .put("z", z)
 
-            vertx.eventBus().request<JsonObject>("insertGyroscope", gyroData) { ar ->
-              if (ar.succeeded()) {
-                ctx.response()
-                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode())
-              } else {
-                logger.error(ar.cause()) { "Failed to store gyroscope" }
-                ctx.response()
-                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode())
-              }
-            }
+            requestAndReplyOk(ctx, "insertGyroscope", gyroData, "Failed to store gyroscope")
           } catch (e: Exception) {
             logger.error(e) { "Error handling /api/gyroscope" }
-            ctx.response().setStatusCode(400)
-              .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-              .end(JsonObject().put("error", e.message).encode())
+            respondError(ctx, 400, e.message)
           }
         }
 
         // POST /api/accelerometer
         api.post("/accelerometer").handler { ctx ->
           try {
-            val body = ctx.bodyAsJson
+            val body = requireJsonBody(ctx)
             val deviceId = body.getString("device_id") ?: "unknown"
             val ts = body.getLong("ts")
             val x = body.getDouble("x")
@@ -339,30 +275,17 @@ class MainVerticle : AbstractVerticle() {
               .put("y", y)
               .put("z", z)
 
-            vertx.eventBus().request<JsonObject>("insertAccelerometer", accelData) { ar ->
-              if (ar.succeeded()) {
-                ctx.response()
-                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode())
-              } else {
-                logger.error(ar.cause()) { "Failed to store accelerometer" }
-                ctx.response()
-                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode())
-              }
-            }
+            requestAndReplyOk(ctx, "insertAccelerometer", accelData, "Failed to store accelerometer")
           } catch (e: Exception) {
             logger.error(e) { "Error handling /api/accelerometer" }
-            ctx.response().setStatusCode(400)
-              .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-              .end(JsonObject().put("error", e.message).encode())
+            respondError(ctx, 400, e.message)
           }
         }
 
         // POST /api/pedometer
         api.post("/pedometer").handler { ctx ->
           try {
-            val body = ctx.bodyAsJson
+            val body = requireJsonBody(ctx)
             val deviceId = body.getString("device_id") ?: "unknown"
             val ts = body.getLong("ts")
             val steps = body.getLong("steps")
@@ -397,13 +320,16 @@ class MainVerticle : AbstractVerticle() {
         // POST /api/location - Store location and check geofence
         api.post("/location").handler { ctx ->
           try {
-            val body = ctx.bodyAsJson
+            val body = requireJsonBody(ctx)
             val deviceId = body.getString("device_id") ?: "unknown"
-            val ts = body.getLong("ts")
-            val latitude = body.getDouble("latitude")
-            val longitude = body.getDouble("longitude")
-            val accuracy = body.getDouble("accuracy")
-            val altitude = body.getDouble("altitude")
+            val participantId = extractParticipantId(body)
+            val ts = readLongValue(body, "timestamp", "ts") ?: System.currentTimeMillis()
+            val latitude = readDoubleValue(body, "latitude", "lat")
+              ?: throw IllegalArgumentException("latitude is required")
+            val longitude = readDoubleValue(body, "longitude", "lon", "lng")
+              ?: throw IllegalArgumentException("longitude is required")
+            val accuracy = readDoubleValue(body, "accuracy", "horizontal_accuracy") ?: 0.0
+            val altitude = readDoubleValue(body, "altitude") ?: 0.0
 
             logger.info { "Location from $deviceId: lat=$latitude lon=$longitude acc=$accuracy" }
 
@@ -415,26 +341,13 @@ class MainVerticle : AbstractVerticle() {
               .put("altitude", altitude)
               .put("accuracy", accuracy)
 
-            vertx.eventBus().request<JsonObject>("insertLocation", locationData) { ar ->
-              if (ar.succeeded()) {
-                ctx.response()
-                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode())
-              } else {
-                logger.error(ar.cause()) { "Failed to store location" }
-                ctx.response()
-                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode())
-              }
+            ensureParticipantLink(deviceId, "phone", participantId)
+            requestAndReplyOk(ctx, "insertLocation", locationData, "Failed to store location") {
+              checkGeofence(deviceId, latitude, longitude)
             }
-
-            // Check geofences for this device
-            checkGeofence(deviceId, latitude, longitude)
           } catch (e: Exception) {
             logger.error(e) { "Error handling /api/location" }
-            ctx.response().setStatusCode(400)
-              .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-              .end(JsonObject().put("error", e.message).encode())
+            respondError(ctx, 400, e.message)
           }
         }
 
@@ -443,172 +356,130 @@ class MainVerticle : AbstractVerticle() {
         // POST /api/wearable/heart-rate
         api.post("/wearable/heart-rate").handler { ctx ->
           try {
-            val body = ctx.bodyAsJson
+            val body = requireJsonBody(ctx)
+            val participantId = extractParticipantId(body)
+            val deviceId = body.getString("device_id") ?: "unknown"
             val data = JsonObject()
-              .put("device_id", body.getString("device_id") ?: "unknown")
+              .put("device_id", deviceId)
               .put("timestamp", body.getLong("timestamp"))
               .put("bpm", body.getInteger("bpm"))
-            vertx.eventBus().request<JsonObject>("insertWearableHeartRate", data) { ar ->
-              if (ar.succeeded()) {
-                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode())
-              } else {
-                logger.error(ar.cause()) { "Failed to store wearable heart rate" }
-                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode())
-              }
-            }
+            ensureParticipantLink(deviceId, "watch", participantId)
+            requestAndReplyOk(ctx, "insertWearableHeartRate", data, "Failed to store wearable heart rate")
           } catch (e: Exception) {
             logger.error(e) { "Error handling /api/wearable/heart-rate" }
-            ctx.response().setStatusCode(400).end(JsonObject().put("error", e.message).encode())
+            respondError(ctx, 400, e.message)
           }
         }
 
         // POST /api/wearable/steps
         api.post("/wearable/steps").handler { ctx ->
           try {
-            val body = ctx.bodyAsJson
+            val body = requireJsonBody(ctx)
+            val participantId = extractParticipantId(body)
+            val deviceId = body.getString("device_id") ?: "unknown"
             val data = JsonObject()
-              .put("device_id", body.getString("device_id") ?: "unknown")
+              .put("device_id", deviceId)
               .put("start_time", body.getLong("start_time"))
               .put("end_time", body.getLong("end_time"))
               .put("count", body.getInteger("count"))
-            vertx.eventBus().request<JsonObject>("insertWearableSteps", data) { ar ->
-              if (ar.succeeded()) {
-                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode())
-              } else {
-                logger.error(ar.cause()) { "Failed to store wearable steps" }
-                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode())
-              }
-            }
+            ensureParticipantLink(deviceId, "watch", participantId)
+            requestAndReplyOk(ctx, "insertWearableSteps", data, "Failed to store wearable steps")
           } catch (e: Exception) {
             logger.error(e) { "Error handling /api/wearable/steps" }
-            ctx.response().setStatusCode(400).end(JsonObject().put("error", e.message).encode())
+            respondError(ctx, 400, e.message)
           }
         }
 
         // POST /api/wearable/sleep
         api.post("/wearable/sleep").handler { ctx ->
           try {
-            val body = ctx.bodyAsJson
+            val body = requireJsonBody(ctx)
+            val participantId = extractParticipantId(body)
+            val deviceId = body.getString("device_id") ?: "unknown"
             val data = JsonObject()
-              .put("device_id", body.getString("device_id") ?: "unknown")
+              .put("device_id", deviceId)
               .put("start_time", body.getLong("start_time"))
               .put("end_time", body.getLong("end_time"))
               .put("title", body.getString("title", "Sleep"))
               .put("notes", body.getString("notes", ""))
-            vertx.eventBus().request<JsonObject>("insertWearableSleep", data) { ar ->
-              if (ar.succeeded()) {
-                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode())
-              } else {
-                logger.error(ar.cause()) { "Failed to store wearable sleep" }
-                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode())
-              }
-            }
+            ensureParticipantLink(deviceId, "watch", participantId)
+            requestAndReplyOk(ctx, "insertWearableSleep", data, "Failed to store wearable sleep")
           } catch (e: Exception) {
             logger.error(e) { "Error handling /api/wearable/sleep" }
-            ctx.response().setStatusCode(400).end(JsonObject().put("error", e.message).encode())
+            respondError(ctx, 400, e.message)
           }
         }
 
         // POST /api/wearable/blood-pressure
         api.post("/wearable/blood-pressure").handler { ctx ->
           try {
-            val body = ctx.bodyAsJson
+            val body = requireJsonBody(ctx)
+            val participantId = extractParticipantId(body)
+            val deviceId = body.getString("device_id") ?: "unknown"
             val data = JsonObject()
-              .put("device_id", body.getString("device_id") ?: "unknown")
+              .put("device_id", deviceId)
               .put("timestamp", body.getLong("timestamp"))
               .put("systolic", body.getDouble("systolic"))
               .put("diastolic", body.getDouble("diastolic"))
-            vertx.eventBus().request<JsonObject>("insertWearableBloodPressure", data) { ar ->
-              if (ar.succeeded()) {
-                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode())
-              } else {
-                logger.error(ar.cause()) { "Failed to store wearable blood pressure" }
-                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode())
-              }
-            }
+            ensureParticipantLink(deviceId, "watch", participantId)
+            requestAndReplyOk(ctx, "insertWearableBloodPressure", data, "Failed to store wearable blood pressure")
           } catch (e: Exception) {
             logger.error(e) { "Error handling /api/wearable/blood-pressure" }
-            ctx.response().setStatusCode(400).end(JsonObject().put("error", e.message).encode())
+            respondError(ctx, 400, e.message)
           }
         }
 
         // POST /api/wearable/weight
         api.post("/wearable/weight").handler { ctx ->
           try {
-            val body = ctx.bodyAsJson
+            val body = requireJsonBody(ctx)
+            val participantId = extractParticipantId(body)
+            val deviceId = body.getString("device_id") ?: "unknown"
             val data = JsonObject()
-              .put("device_id", body.getString("device_id") ?: "unknown")
+              .put("device_id", deviceId)
               .put("timestamp", body.getLong("timestamp"))
               .put("weight_kg", body.getDouble("weight_kg"))
-            vertx.eventBus().request<JsonObject>("insertWearableWeight", data) { ar ->
-              if (ar.succeeded()) {
-                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode())
-              } else {
-                logger.error(ar.cause()) { "Failed to store wearable weight" }
-                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode())
-              }
-            }
+            ensureParticipantLink(deviceId, "watch", participantId)
+            requestAndReplyOk(ctx, "insertWearableWeight", data, "Failed to store wearable weight")
           } catch (e: Exception) {
             logger.error(e) { "Error handling /api/wearable/weight" }
-            ctx.response().setStatusCode(400).end(JsonObject().put("error", e.message).encode())
+            respondError(ctx, 400, e.message)
           }
         }
 
         // POST /api/wearable/oxygen
         api.post("/wearable/oxygen").handler { ctx ->
           try {
-            val body = ctx.bodyAsJson
+            val body = requireJsonBody(ctx)
+            val participantId = extractParticipantId(body)
+            val deviceId = body.getString("device_id") ?: "unknown"
             val data = JsonObject()
-              .put("device_id", body.getString("device_id") ?: "unknown")
+              .put("device_id", deviceId)
               .put("timestamp", body.getLong("timestamp"))
               .put("percentage", body.getDouble("percentage"))
-            vertx.eventBus().request<JsonObject>("insertWearableOxygen", data) { ar ->
-              if (ar.succeeded()) {
-                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode())
-              } else {
-                logger.error(ar.cause()) { "Failed to store wearable oxygen" }
-                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode())
-              }
-            }
+            ensureParticipantLink(deviceId, "watch", participantId)
+            requestAndReplyOk(ctx, "insertWearableOxygen", data, "Failed to store wearable oxygen")
           } catch (e: Exception) {
             logger.error(e) { "Error handling /api/wearable/oxygen" }
-            ctx.response().setStatusCode(400).end(JsonObject().put("error", e.message).encode())
+            respondError(ctx, 400, e.message)
           }
         }
 
         // POST /api/wearable/respiratory
         api.post("/wearable/respiratory").handler { ctx ->
           try {
-            val body = ctx.bodyAsJson
+            val body = requireJsonBody(ctx)
+            val participantId = extractParticipantId(body)
+            val deviceId = body.getString("device_id") ?: "unknown"
             val data = JsonObject()
-              .put("device_id", body.getString("device_id") ?: "unknown")
+              .put("device_id", deviceId)
               .put("timestamp", body.getLong("timestamp"))
               .put("rate", body.getDouble("rate"))
-            vertx.eventBus().request<JsonObject>("insertWearableRespiratory", data) { ar ->
-              if (ar.succeeded()) {
-                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode())
-              } else {
-                logger.error(ar.cause()) { "Failed to store wearable respiratory" }
-                ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("ok", true).encode())
-              }
-            }
+            ensureParticipantLink(deviceId, "watch", participantId)
+            requestAndReplyOk(ctx, "insertWearableRespiratory", data, "Failed to store wearable respiratory")
           } catch (e: Exception) {
             logger.error(e) { "Error handling /api/wearable/respiratory" }
-            ctx.response().setStatusCode(400).end(JsonObject().put("error", e.message).encode())
+            respondError(ctx, 400, e.message)
           }
         }
 
@@ -655,22 +526,10 @@ class MainVerticle : AbstractVerticle() {
         // POST /api/participants - Create/update participant
         api.post("/participants").handler { ctx ->
           try {
-            val body = ctx.bodyAsJson
-            eventBus.request<JsonObject>("upsertParticipant", body) { ar ->
-              if (ar.succeeded()) {
-                ctx.response().setStatusCode(201)
-                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(ar.result().body().encode())
-              } else {
-                ctx.response().setStatusCode(500)
-                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("error", ar.cause().message).encode())
-              }
-            }
+            val body = requireJsonBody(ctx)
+            requestJsonObject(ctx, "upsertParticipant", body, successStatusCode = 201)
           } catch (e: Exception) {
-            ctx.response().setStatusCode(400)
-              .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-              .end(JsonObject().put("error", e.message).encode())
+            respondError(ctx, 400, e.message)
           }
         }
 
@@ -678,22 +537,10 @@ class MainVerticle : AbstractVerticle() {
         api.put("/participants/:participantId").handler { ctx ->
           try {
             val participantId = ctx.pathParam("participantId")
-            val body = ctx.bodyAsJson.put("participant_id", participantId)
-            eventBus.request<JsonObject>("upsertParticipant", body) { ar ->
-              if (ar.succeeded()) {
-                ctx.response()
-                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(ar.result().body().encode())
-              } else {
-                ctx.response().setStatusCode(500)
-                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("error", ar.cause().message).encode())
-              }
-            }
+            val body = requireJsonBody(ctx).put("participant_id", participantId)
+            requestJsonObject(ctx, "upsertParticipant", body)
           } catch (e: Exception) {
-            ctx.response().setStatusCode(400)
-              .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-              .end(JsonObject().put("error", e.message).encode())
+            respondError(ctx, 400, e.message)
           }
         }
 
@@ -716,22 +563,10 @@ class MainVerticle : AbstractVerticle() {
         // POST /api/zones - Create red zone
         api.post("/zones").handler { ctx ->
           try {
-            val body = ctx.bodyAsJson
-            eventBus.request<JsonObject>("insertRedZone", body) { ar ->
-              if (ar.succeeded()) {
-                ctx.response().setStatusCode(201)
-                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(ar.result().body().encode())
-              } else {
-                ctx.response().setStatusCode(500)
-                  .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-                  .end(JsonObject().put("error", ar.cause().message).encode())
-              }
-            }
+            val body = requireJsonBody(ctx)
+            requestJsonObject(ctx, "insertRedZone", body, successStatusCode = 201)
           } catch (e: Exception) {
-            ctx.response().setStatusCode(400)
-              .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
-              .end(JsonObject().put("error", e.message).encode())
+            respondError(ctx, 400, e.message)
           }
         }
 
@@ -792,14 +627,18 @@ class MainVerticle : AbstractVerticle() {
 
         // ---- SIGNATURE ALERT ENDPOINTS ----
 
-        // GET /api/signature-alerts?active=true|false&limit=200
+        // GET /api/signature-alerts?active=true|false&limit=10000|all
         api.get("/signature-alerts").handler { ctx ->
           val activeOnly = ctx.queryParam("active").firstOrNull()?.toBoolean() ?: false
-          val limit = ctx.queryParam("limit").firstOrNull()?.toIntOrNull() ?: 200
+          val limitParam = ctx.queryParam("limit").firstOrNull()
+          val requestBody = JsonObject().put("active_only", activeOnly)
+          if (!limitParam.isNullOrBlank()) {
+            requestBody.put("limit", limitParam)
+          }
 
           vertx.eventBus().request<JsonArray>(
             "getSignatureAlerts",
-            JsonObject().put("active_only", activeOnly).put("limit", limit)
+            requestBody
           ) { ar ->
             if (ar.succeeded()) {
               ctx.response()
@@ -1465,6 +1304,111 @@ class MainVerticle : AbstractVerticle() {
     return serverConfig.getInteger("server_port")
   }
 
+  private fun respondJson(ctx: RoutingContext, statusCode: Int, payload: JsonObject) {
+    ctx.response()
+      .setStatusCode(statusCode)
+      .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+      .end(payload.encode())
+  }
+
+  private fun respondOk(ctx: RoutingContext, statusCode: Int = 200) {
+    respondJson(ctx, statusCode, JsonObject().put("ok", true))
+  }
+
+  private fun respondError(ctx: RoutingContext, statusCode: Int, message: String?) {
+    respondJson(ctx, statusCode, JsonObject().put("error", message ?: "Unknown error"))
+  }
+
+  private fun requireJsonBody(ctx: RoutingContext): JsonObject {
+    return ctx.body().asJsonObject()
+  }
+
+  private fun extractParticipantId(body: JsonObject): String? {
+    val raw = body.getString("participant_id") ?: body.getString("participantId")
+    if (raw == null) return null
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return null
+    return trimmed
+  }
+
+  private fun readLongValue(body: JsonObject, vararg keys: String): Long? {
+    for (key in keys) {
+      val value = body.getValue(key) ?: continue
+      when (value) {
+        is Number -> return value.toLong()
+        is String -> value.toLongOrNull()?.let { return it }
+      }
+    }
+    return null
+  }
+
+  private fun readDoubleValue(body: JsonObject, vararg keys: String): Double? {
+    for (key in keys) {
+      val value = body.getValue(key) ?: continue
+      when (value) {
+        is Number -> return value.toDouble()
+        is String -> value.toDoubleOrNull()?.let { return it }
+      }
+    }
+    return null
+  }
+
+  private fun ensureParticipantLink(
+    deviceId: String?,
+    deviceType: String,
+    participantId: String? = null
+  ) {
+    val safeDeviceId = deviceId?.trim()
+    if (safeDeviceId.isNullOrEmpty() || safeDeviceId == "unknown") return
+
+    val payload = JsonObject()
+      .put("device_id", safeDeviceId)
+      .put("device_type", deviceType)
+      .put("name", "Device $safeDeviceId")
+    if (!participantId.isNullOrBlank()) {
+      payload.put("participant_id", participantId.trim())
+    }
+
+    vertx.eventBus().request<JsonObject>("upsertParticipant", payload) { ar ->
+      if (ar.failed()) {
+        logger.debug(ar.cause()) { "Auto participant link failed for $safeDeviceId ($deviceType)" }
+      }
+    }
+  }
+
+  private fun requestAndReplyOk(
+    ctx: RoutingContext,
+    address: String,
+    data: JsonObject,
+    failureLog: String,
+    successStatusCode: Int = 200,
+    onSuccess: (() -> Unit)? = null
+  ) {
+    vertx.eventBus().request<JsonObject>(address, data) { ar ->
+      if (ar.succeeded()) {
+        onSuccess?.invoke()
+      } else {
+        logger.error(ar.cause()) { failureLog }
+      }
+      respondOk(ctx, successStatusCode)
+    }
+  }
+
+  private fun requestJsonObject(
+    ctx: RoutingContext,
+    address: String,
+    data: JsonObject,
+    successStatusCode: Int = 200
+  ) {
+    vertx.eventBus().request<JsonObject>(address, data) { ar ->
+      if (ar.succeeded()) {
+        respondJson(ctx, successStatusCode, ar.result().body())
+      } else {
+        respondError(ctx, 500, ar.cause().message)
+      }
+    }
+  }
+
   // ---- GEOFENCE DETECTION LOGIC ----
 
   /**
@@ -1540,7 +1484,7 @@ class MainVerticle : AbstractVerticle() {
                         .put("longitude", longitude)
                         .put("distance", distance)
 
-                      eventBus.publish("insertGeofenceAlert", alertData)
+                      eventBus.request<JsonObject>("insertGeofenceAlert", alertData)
                       logger.warn { "GEOFENCE ALERT: Participant $participantId entered zone '$zoneName' (distance: ${String.format("%.1f", distance)}m)" }
                     }
                   }

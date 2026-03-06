@@ -71,3 +71,28 @@ https://dbeaver.io/download/
 Click Test Connection.
 You should get a Success window.
 Then click Finish.
+
+------
+
+Schema Startup Order
+
+Use this order when another teammate clones the project and needs a reproducible local setup.
+
+1. Start all services
++
+----
+docker compose up -d --build
+----
+
+2. If you want synthetic data, run the generator after services are healthy
++
+----
+python backend/generate_aware_mysql_v2.py
+----
+
+What creates which tables
+
+- `backend`
+  - creates/migrates all required tables on startup (source of truth)
+- `signature_engine`
+  - consumes the schema and processes incoming data

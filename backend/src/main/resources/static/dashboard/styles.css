@@ -12,7 +12,7 @@
     --color-border: #e1e4e8;
     --color-success: #28a745;
     --color-warning: #d4a017;
-    --color-danger: #c9302c;
+    --color-danger: #a42824;
     --color-info: #3d5a80;
     --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
     --sidebar-width: 240px;
@@ -176,6 +176,24 @@ table {
 .btn-secondary:hover {
     background-color: rgba(255, 255, 255, 0.1);
     border-color: var(--color-text-secondary);
+}
+
+.btn-danger {
+    background-color: var(--color-danger);
+    color: var(--color-surface);
+}
+
+.btn-danger:hover {
+    background-color: #c9302c;
+}
+
+.btn-info {
+    background-color: var(--color-info);
+    color: var(--color-surface);
+}
+
+.btn-info:hover {
+    background-color: #3d5a80;
 }
 
 .btn-block {
@@ -510,6 +528,51 @@ table {
     gap: 16px;
 }
 
+.participant-alert-group {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.participant-alert-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--border-radius);
+}
+
+.participant-alert-title {
+    font-weight: 700;
+}
+
+.participant-alert-count {
+    font-size: 12px;
+    color: var(--color-text-muted);
+}
+
+.participant-alert-breakdown {
+    display: inline-block;
+    margin-left: 10px;
+}
+
+.participant-alert-body {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.participant-no-alerts {
+    padding: 16px 18px;
+    background-color: var(--color-surface);
+    border: 1px dashed var(--color-border);
+    border-radius: var(--border-radius);
+    color: var(--color-text-muted);
+    font-size: 13px;
+}
+
 .alert-item {
     display: flex;
     align-items: flex-start;
@@ -563,9 +626,69 @@ table {
     color: var(--color-text-muted);
 }
 
+.alert-source-badge {
+    display: inline-block;
+    margin-right: 8px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.alert-source-badge.phone {
+    background-color: rgba(0, 123, 255, 0.1);
+    color: #0d6efd;
+}
+
+.alert-source-badge.watch {
+    background-color: rgba(40, 167, 69, 0.12);
+    color: #218838;
+}
+
+.alert-source-badge.both {
+    background-color: rgba(255, 193, 7, 0.14);
+    color: #9a6700;
+}
+
 .alert-actions {
     display: flex;
     gap: 8px;
+    align-items: center;
+    margin-left: 12px;
+}
+
+.alert-ack-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 140px;
+    justify-content: center;
+    padding: 10px 14px;
+    font-size: 13px;
+    font-weight: 700;
+    border-radius: 10px;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+}
+
+.alert-ack-btn i {
+    font-size: 12px;
+}
+
+@media (max-width: 900px) {
+    .alert-item {
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .alert-actions {
+        margin-left: 0;
+        width: 100%;
+    }
+
+    .alert-ack-btn {
+        width: 100%;
+    }
 }
 
 /* Risk Level Badges */
@@ -749,7 +872,7 @@ table {
 }
 
 .btn-danger:hover {
-    background-color: #a82824;
+    background-color: #42100e;
 }
 
 /* Info Button Style */

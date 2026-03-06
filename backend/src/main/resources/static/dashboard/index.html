@@ -67,7 +67,7 @@
                 </a>
             </nav>
             <div class="sidebar-footer">
-                <button id="logout-btn" class="btn btn-secondary btn-block"><i style="margin-right: 5px;" class="fas fa-sign-out-alt"></i> Sign Out</button>
+                <button id="logout-btn" class="btn btn-danger btn-block"><i style="margin-right: 5px;" class="fas fa-sign-out-alt"></i> Sign Out</button>
             </div>
         </aside>
 
@@ -197,6 +197,20 @@
                             <option value="active">Active (Unacknowledged)</option>
                             <option value="acknowledged">Acknowledged</option>
                         </select>
+                        <select id="alert-source-filter" class="form-select">
+                            <option value="all">Phone + Watch</option>
+                            <option value="phone">Phone Only</option>
+                            <option value="watch">Watch Only</option>
+                        </select>
+                        <select id="alert-participant-filter" class="form-select">
+                            <option value="all">All Participants</option>
+                        </select>
+                        <select id="alert-limit-filter" class="form-select">
+                            <option value="200">200 Alerts</option>
+                            <option value="1000">1000 Alerts</option>
+                            <option value="10000" selected>10000 Alerts</option>
+                            <option value="all">All Alerts</option>
+                        </select>
                         <button class="btn btn-secondary" id="refresh-alerts-btn" style="margin-left: 10px;">Refresh</button>
                     </div>
                 </div>
@@ -216,6 +230,7 @@
                                 <tr>
                                     <th>Device ID</th>
                                     <th>Assigned Participant</th>
+                                    <th>Source</th>
                                     <th>Last Activity</th>
                                     <th>Battery</th>
                                     <th>Sensors Active</th>

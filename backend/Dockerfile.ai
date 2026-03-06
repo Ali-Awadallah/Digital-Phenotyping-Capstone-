@@ -2,8 +2,19 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY build_hourly_features_and_alerts.py .
+ENV PYTHONUNBUFFERED=1 \
+    OMP_NUM_THREADS=1 \
+    OPENBLAS_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1 \
+    NUMEXPR_NUM_THREADS=1 \
+    TORCH_NUM_THREADS=1
 
-RUN pip install --no-cache-dir pandas numpy scikit-learn mysql-connector-python
+COPY requirements-ai.txt .
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch
+RUN pip install --no-cache-dir -r requirements-ai.txt
+
+COPY build_hourly_features_and_alerts.py .
+COPY generate_aware_mysql_v2.py .
+COPY signature_engine ./signature_engine
 
 CMD ["python", "-u", "build_hourly_features_and_alerts.py"]
