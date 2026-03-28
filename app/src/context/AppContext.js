@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Platform, Alert, NativeModules } from "react-native";
+import { Platform, Alert, NativeModules, AppState } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from "expo-file-system/legacy";
 import Constants from "expo-constants";
@@ -530,6 +530,70 @@ export function AppProvider({ children }) {
   useEffect(() => {
     let stepSub = null;
     let intervalId = null;
+    let appStateSubscription = null;
+
+    // Read pedometer-events.log written by native SensorCollectorService
+    // to compute today's step total. The log entries have {ts, steps}
+    // where steps is cumulative since the service started.
+    const readNativeTodaySteps = async () => {
+      try {
+        if (Platform.OS !== "android") return 0;
+        const pkg =
+          (Constants?.expoConfig?.android?.package) || "com.dp.demo";
+        const paths = [];
+        if (FileSystem.documentDirectory)
+          paths.push(
+            FileSystem.documentDirectory + "pedometer-events.log"
+          );
+        paths.push(
+          `file:///data/user/0/${pkg}/files/pedometer-events.log`
+        );
+        for (const p of paths) {
+          try {
+            const info = await FileSystem.getInfoAsync(p);
+            if (!info || !info.exists) continue;
+            const raw = await FileSystem.readAsStringAsync(p);
+            if (!raw) continue;
+            const content = raw.includes("\\n")
+              ? raw.replace(/\\n/g, "\n")
+              : raw;
+            const lines = content.split("\n").filter(Boolean);
+            if (lines.length === 0) continue;
+
+            const midnight = new Date();
+            midnight.setHours(0, 0, 0, 0);
+            const midnightMs = midnight.getTime();
+
+            let lastPreToday = null;
+            let firstToday = null;
+            let lastToday = null;
+
+            for (const line of lines) {
+              try {
+                const e = JSON.parse(line);
+                if (typeof e.steps !== "number") continue;
+                const ts = typeof e.ts === "number" ? e.ts : 0;
+                if (ts < midnightMs) {
+                  lastPreToday = e.steps;
+                } else {
+                  if (firstToday === null) firstToday = e.steps;
+                  lastToday = e.steps;
+                }
+              } catch { }
+            }
+
+            if (lastToday === null) return 0;
+            const base =
+              lastPreToday !== null ? lastPreToday : firstToday;
+            return Math.max(0, lastToday - base);
+          } catch { }
+        }
+        return 0;
+      } catch {
+        return 0;
+      }
+    };
+
     const updateSteps = async () => {
       try {
         if (!prefsLoaded) return;
@@ -582,6 +646,19 @@ export function AppProvider({ children }) {
         // ignore
       }
     };
+
+    // Re-subscribe watchStepCount so the cumulative counter resets
+    // and new steps add on top of the current baseline.
+    const resubscribeWatch = () => {
+      try { stepSub && stepSub.remove && stepSub.remove(); } catch { }
+      stepSub = Pedometer.watchStepCount(({ steps }) => {
+        const val = steps || 0;
+        stepsSinceOpenRef.current = val;
+        setStepsSinceOpen(val);
+        updateSteps();
+      });
+    };
+
     const init = async () => {
       try {
         if (!collectPedometer) {
@@ -601,13 +678,32 @@ export function AppProvider({ children }) {
         setIsPedometerAvailable(!!available && collectPedometer);
         if (!available) return;
         await updateSteps();
-        stepSub = Pedometer.watchStepCount(({ steps }) => {
-          const val = steps || 0;
-          stepsSinceOpenRef.current = val;
-          setStepsSinceOpen(val);
-          updateSteps();
-        });
+        resubscribeWatch();
         intervalId = setInterval(updateSteps, 30 * 1000);
+
+        // Refresh UI when the app returns to foreground
+        appStateSubscription = AppState.addEventListener(
+          "change",
+          async (nextState) => {
+            if (nextState === "active") {
+              // Fold JS-tracked foreground steps into baseline
+              pedoBaselineRef.current =
+                (pedoBaselineRef.current || 0) +
+                (stepsSinceOpenRef.current || 0);
+              stepsSinceOpenRef.current = 0;
+              setStepsSinceOpen(0);
+              resubscribeWatch();
+
+              // Read native service log for background steps
+              const nativeToday = await readNativeTodaySteps();
+              if (nativeToday > (pedoBaselineRef.current || 0)) {
+                pedoBaselineRef.current = nativeToday;
+              }
+
+              updateSteps();
+            }
+          }
+        );
       } catch (e) {
         setIsPedometerAvailable(false);
       }
@@ -618,6 +714,9 @@ export function AppProvider({ children }) {
         stepSub && stepSub.remove && stepSub.remove();
       } catch { }
       if (intervalId) clearInterval(intervalId);
+      if (appStateSubscription) {
+        appStateSubscription.remove();
+      }
     };
   }, [prefsLoaded, collectPedometer]);
 
