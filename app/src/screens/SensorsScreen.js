@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -6,18 +6,14 @@ import {
   StyleSheet,
   Platform,
 } from "react-native";
-import { Ionicons as Icon } from "@expo/vector-icons";
+import { Ionicons as Icon, MaterialCommunityIcons } from "@expo/vector-icons";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import * as Battery from "expo-battery";
 import { useApp } from "../context/AppContext";
-import * as FileSystem from "expo-file-system/legacy";
 import ScreenContainer from "../components/ScreenContainer";
 
 export default function SensorsScreen() {
   const {
-    location,
-    accelerometerData,
-    gyroscopeData,
     isLocationEnabled,
     accelerometerActive,
     gyroscopeActive,
@@ -27,11 +23,9 @@ export default function SensorsScreen() {
     isPedometerAvailable,
     stepsToday,
     screenEvents,
-    screenMeta,
     refreshScreenEvents,
     collectScreenEvents,
     notificationEvents,
-    refreshNotificationEvents,
     hasNotificationAccess,
     openNotificationAccess,
     checkNotificationAccess,
@@ -44,545 +38,378 @@ export default function SensorsScreen() {
     }
   }, [checkNotificationAccess]);
 
+  // Computed: Screen event summary for today
+  const screenSummary = useMemo(() => {
+    if (!screenEvents || !screenEvents.length)
+      return { unlocks: 0, locks: 0, total: 0, lastUnlock: null, lastLock: null };
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const start = today.getTime();
+    const todayEvts = screenEvents.filter((e) => e.ts >= start);
+    let unlocks = 0, locks = 0, lastUnlock = null, lastLock = null;
+    todayEvts.forEach((e) => {
+      const evt = (e.event || "").toUpperCase();
+      if (evt === "SCREEN_ON" || evt === "USER_PRESENT") {
+        unlocks++;
+        if (!lastUnlock || e.ts > lastUnlock) lastUnlock = e.ts;
+      } else if (evt === "SCREEN_OFF") {
+        locks++;
+        if (!lastLock || e.ts > lastLock) lastLock = e.ts;
+      }
+    });
+    return { unlocks, locks, total: todayEvts.length, lastUnlock, lastLock };
+  }, [screenEvents]);
+
+  // Computed: Notification summary for today
+  const notifSummary = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const start = today.getTime();
+    const todays = (notificationEvents || []).filter(
+      (n) => n && typeof n.ts === "number" && n.ts >= start
+    );
+    const posted = todays.filter((n) => n.kind === "posted");
+    const apps = {};
+    posted.forEach((n) => {
+      if (n.appName) apps[n.appName] = (apps[n.appName] || 0) + 1;
+    });
+    const topApps = Object.entries(apps)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
+    return { total: todays.length, posted: posted.length, topApps };
+  }, [notificationEvents]);
+
+  const fmtTime = (ts) =>
+    ts
+      ? new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : "—";
+
   return (
     <ScreenContainer>
+      {/* Privacy Hero Section */}
+      <View style={styles.heroSection}>
+        <Text style={styles.heroHeading}>
+          Your data is a{"\n"}
+          <Text style={styles.heroAccent}>sacred </Text>
+          narrative.
+        </Text>
+        <Text style={styles.heroBody}>
+          Digital phenotyping translates your sensor data into wellness insights.
+          We encrypt every byte locally. You hold the master key—decide exactly
+          what to share and when to stop.
+        </Text>
+        <View style={styles.encryptedCard}>
+          <View style={styles.encryptedIconRow}>
+            <MaterialCommunityIcons
+              name="shield-check"
+              size={22}
+              color="#15d6a9"
+            />
+            <Text style={styles.encryptedTitle}>End-to-End Encrypted</Text>
+          </View>
+          <Text style={styles.encryptedBody}>
+            Only your device holds the decryption keys. Even we can't see your
+            raw sensor patterns.
+          </Text>
+        </View>
+      </View>
+
+      {/* Today's Overview */}
       <View style={{ flexDirection: "row", alignItems: "center" }}>
         <MaterialIcons
-          name="sensors"
+          name="dashboard"
           size={28}
           color="#15d6a9"
           style={{ marginRight: 8, marginBottom: 16 }}
         />
-        <Text style={styles.contentTitle}>Sensor Data</Text>
+        <Text style={styles.contentTitle}>Today's Overview</Text>
       </View>
-      <Text style={styles.infoText}>
-        Real-time sensor data for digital phenotyping analysis. You can
-        Opt-in/out from any certain data collection from the Settings Tab
-      </Text>
 
-      <Text style={styles.Title}>Device Sensors</Text>
-
-      {/* Location */}
-      <View style={styles.sensorSection}>
-        <View style={styles.sensorHeader}>
-          <Icon name="location-outline" size={24} color="#15d6a9" />
-          <Text style={styles.sensorTitle}>Location</Text>
-          <View
-            style={[
-              styles.statusIndicator,
-              { backgroundColor: isLocationEnabled ? "#32D74B" : "#FF3B30" },
-            ]}
-          />
+      {/* Summary Tiles */}
+      <View style={styles.tilesRow}>
+        <View style={styles.tile}>
+          <Icon name="footsteps-outline" size={26} color="#5856D6" />
+          <Text style={styles.tileNumber}>{stepsToday.toLocaleString()}</Text>
+          <Text style={styles.tileLabel}>Steps</Text>
         </View>
-        {isLocationEnabled && location ? (
-          <View style={styles.sensorData}>
-            <Text style={styles.sensorLabel}>
-              Latitude:{" "}
-              <Text style={styles.sensorValue}>
-                {location.latitude.toFixed(6)}
-              </Text>
-            </Text>
-            <Text style={styles.sensorLabel}>
-              Longitude:{" "}
-              <Text style={styles.sensorValue}>
-                {location.longitude.toFixed(6)}
-              </Text>
-            </Text>
-            <Text style={styles.sensorLabel}>
-              Accuracy:{" "}
-              <Text style={styles.sensorValue}>
-                {location.accuracy?.toFixed(2)}m
-              </Text>
-            </Text>
-            <Text style={styles.sensorLabel}>
-              Altitude:{" "}
-              <Text style={styles.sensorValue}>
-                {location.altitude?.toFixed(2)}m
-              </Text>
-            </Text>
-            <Text style={styles.sensorLabel}>
-              Speed:{" "}
-              <Text style={styles.sensorValue}>
-                {location.speed?.toFixed(2)}m/s
-              </Text>
-            </Text>
-          </View>
-        ) : (
-          <Text style={styles.sensorDisabled}>
-            Location access denied or unavailable
+        <View style={styles.tile}>
+          <Icon name="lock-open-outline" size={26} color="#cd2ad3ff" />
+          <Text style={styles.tileNumber}>{screenSummary.unlocks}</Text>
+          <Text style={styles.tileLabel}>Unlocks</Text>
+        </View>
+      </View>
+      <View style={styles.tilesRow}>
+        <View style={styles.tile}>
+          <Icon name="notifications-outline" size={26} color="#f5a623" />
+          <Text style={styles.tileNumber}>{notifSummary.posted}</Text>
+          <Text style={styles.tileLabel}>Notifications</Text>
+        </View>
+        <View style={styles.tile}>
+          <Icon name="battery-charging-outline" size={26} color="#00ad03ff" />
+          <Text style={styles.tileNumber}>
+            {batteryLevel != null ? Math.round(batteryLevel * 100) + "%" : "—"}
           </Text>
-        )}
+          <Text style={styles.tileLabel}>Battery</Text>
+        </View>
       </View>
 
-      {/* Accelerometer */}
+      {/* Screen Activity */}
+      <Text style={styles.sectionTitle}>Screen Activity</Text>
       <View style={styles.sensorSection}>
-        <View style={styles.sensorHeader}>
-          <Icon name="phone-portrait-outline" size={24} color="#FF9500" />
-          <Text style={styles.sensorTitle}>Accelerometer</Text>
-          <View
-            style={[
-              styles.statusIndicator,
-              { backgroundColor: accelerometerActive ? "#32D74B" : "#FF3B30" },
-            ]}
-          />
-        </View>
-        {accelerometerActive && accelerometerData ? (
-          <View style={styles.sensorData}>
-            <Text style={styles.sensorLabel}>
-              X-axis:{" "}
-              <Text style={styles.sensorValue}>
-                {accelerometerData.x.toFixed(3)}g
-              </Text>
-            </Text>
-            <Text style={styles.sensorLabel}>
-              Y-axis:{" "}
-              <Text style={styles.sensorValue}>
-                {accelerometerData.y.toFixed(3)}g
-              </Text>
-            </Text>
-            <Text style={styles.sensorLabel}>
-              Z-axis:{" "}
-              <Text style={styles.sensorValue}>
-                {accelerometerData.z.toFixed(3)}g
-              </Text>
-            </Text>
-            <Text style={styles.sensorLabel}>
-              Magnitude:{" "}
-              <Text style={styles.sensorValue}>
-                {Math.sqrt(
-                  accelerometerData.x ** 2 +
-                  accelerometerData.y ** 2 +
-                  accelerometerData.z ** 2
-                ).toFixed(3)}
-                g
-              </Text>
-            </Text>
-          </View>
-        ) : (
-          <Text style={styles.sensorDisabled}>
-            Accelerometer disabled or not available
-          </Text>
-        )}
-      </View>
-
-      {/* Gyroscope */}
-      <View style={styles.sensorSection}>
-        <View style={styles.sensorHeader}>
-          <MaterialIcons name="screen-rotation" size={24} color="#32D74B" />
-          <Text style={styles.sensorTitle}>Gyroscope</Text>
-          <View
-            style={[
-              styles.statusIndicator,
-              { backgroundColor: gyroscopeActive ? "#32D74B" : "#FF3B30" },
-            ]}
-          />
-        </View>
-        {gyroscopeActive && gyroscopeData ? (
-          <View style={styles.sensorData}>
-            <Text style={styles.sensorLabel}>
-              X-axis:{" "}
-              <Text style={styles.sensorValue}>
-                {gyroscopeData.x.toFixed(3)} rad/s
-              </Text>
-            </Text>
-            <Text style={styles.sensorLabel}>
-              Y-axis:{" "}
-              <Text style={styles.sensorValue}>
-                {gyroscopeData.y.toFixed(3)} rad/s
-              </Text>
-            </Text>
-            <Text style={styles.sensorLabel}>
-              Z-axis:{" "}
-              <Text style={styles.sensorValue}>
-                {gyroscopeData.z.toFixed(3)} rad/s
-              </Text>
-            </Text>
-            <Text style={styles.sensorLabel}>
-              Magnitude:{" "}
-              <Text style={styles.sensorValue}>
-                {Math.sqrt(
-                  gyroscopeData.x ** 2 +
-                  gyroscopeData.y ** 2 +
-                  gyroscopeData.z ** 2
-                ).toFixed(3)}{" "}
-                rad/s
-              </Text>
-            </Text>
-          </View>
-        ) : (
-          <Text style={styles.sensorDisabled}>
-            Gyroscope disabled or not available
-          </Text>
-        )}
-      </View>
-
-      {/* Pedometer */}
-      <View style={styles.sensorSection}>
-        <View style={styles.sensorHeader}>
-          <Icon name="footsteps-outline" size={24} color="#5856D6" />
-          <Text style={styles.sensorTitle}>Pedometer</Text>
-          <View
-            style={[
-              styles.statusIndicator,
-              { backgroundColor: isPedometerAvailable ? "#32D74B" : "#FF3B30" },
-            ]}
-          />
-        </View>
-        {isPedometerAvailable ? (
-          <View style={styles.sensorData}>
-            <Text style={styles.sensorLabel}>
-              Steps today: <Text style={styles.sensorValue}>{stepsToday}</Text>
-            </Text>
-          </View>
-        ) : (
-          <Text style={styles.sensorDisabled}>
-            Pedometer not available or permission denied
-          </Text>
-        )}
-      </View>
-
-      <Text style={styles.Title}>Software Sensors</Text>
-
-      {/* Screen Power Events */}
-      <View style={styles.sensorSection}>
-        <View style={styles.sensorHeader}>
-          <Icon name="power-outline" size={24} color="#cd2ad3ff" />
-          <Text style={styles.sensorTitle}>Screen Events</Text>
-          <View
-            style={[
-              styles.statusIndicator,
-              {
-                backgroundColor: !collectScreenEvents
-                  ? "#FF3B30"
-                  : screenEvents && screenEvents.length
-                    ? "#32D74B"
-                    : "#FFCC00",
-              },
-            ]}
-          />
-        </View>
         {!collectScreenEvents ? (
           <Text style={styles.sensorDisabled}>
             Screen events collection disabled
           </Text>
-        ) : screenEvents && screenEvents.length > 0 ? (
-          <View style={styles.sensorData}>
-            <Text style={styles.sensorLabel}>
-              Total events:{" "}
-              <Text style={styles.sensorValue}>{screenEvents.length}</Text>
-            </Text>
-            {screenEvents.slice(-10).map((evt, idx) => (
-              <Text key={idx} style={styles.sensorLabel}>
-                {new Date(evt.ts).toLocaleString()} —{" "}
-                <Text style={styles.sensorValue}>{evt.event}</Text>
-              </Text>
-            ))}
-            <TouchableOpacity
-              style={[
-                styles.actionButton,
-                { marginTop: 12, backgroundColor: "#15d6a9" },
-              ]}
-              onPress={refreshScreenEvents}
-            >
-              <Text style={styles.actionButtonText}>Refresh Now</Text>
-            </TouchableOpacity>
-          </View>
         ) : (
           <View>
-            <Text style={styles.sensorDisabled}>
-              No events yet. Lock/unlock the device to generate events.
-            </Text>
-            <Text style={[styles.sensorLabel, { marginTop: 8 }]}>
-              Doc dir:{" "}
-              <Text style={styles.sensorValue}>
-                {FileSystem.documentDirectory}
-              </Text>
-            </Text>
-            {screenMeta ? (
-              <>
-                <Text style={styles.sensorLabel}>
-                  Path tried:{" "}
-                  <Text style={styles.sensorValue}>
-                    {screenMeta.targetPath || "n/a"}
-                  </Text>{" "}
-                  {`exists: ${screenMeta.exists ? "yes" : "no"}`}
+            <View style={styles.statRow}>
+              <View style={styles.statItem}>
+                <Icon name="lock-open-outline" size={20} color="#cd2ad3ff" />
+                <Text style={styles.statNumber}>{screenSummary.unlocks}</Text>
+                <Text style={styles.statLabel}>Unlocks</Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.statItem}>
+                <Icon name="lock-closed-outline" size={20} color="#FF3B30" />
+                <Text style={styles.statNumber}>{screenSummary.locks}</Text>
+                <Text style={styles.statLabel}>Locks</Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.statItem}>
+                <Icon name="time-outline" size={20} color="#15d6a9" />
+                <Text style={styles.statNumber}>{screenSummary.total}</Text>
+                <Text style={styles.statLabel}>Total</Text>
+              </View>
+            </View>
+            <View style={styles.timeRow}>
+              <View style={styles.timeItem}>
+                <Text style={styles.timeLabel}>Last Unlock</Text>
+                <Text style={styles.timeValue}>
+                  {fmtTime(screenSummary.lastUnlock)}
                 </Text>
-                <Text style={styles.sensorLabel}>
-                  Last read:{" "}
-                  <Text style={styles.sensorValue}>
-                    {screenMeta.lastRead
-                      ? new Date(screenMeta.lastRead).toLocaleTimeString()
-                      : "n/a"}
-                  </Text>{" "}
-                  {screenMeta.error ? `  err: ${screenMeta.error}` : ""}
+              </View>
+              <View style={styles.timeItem}>
+                <Text style={styles.timeLabel}>Last Lock</Text>
+                <Text style={styles.timeValue}>
+                  {fmtTime(screenSummary.lastLock)}
                 </Text>
-              </>
-            ) : null}
+              </View>
+            </View>
             <TouchableOpacity
               style={[
-                styles.actionButton,
-                { marginTop: 12, backgroundColor: "#15d6a9" },
+                styles.refreshBtn,
+                { backgroundColor: "#15d6a9" },
               ]}
               onPress={refreshScreenEvents}
             >
-              <Text style={styles.actionButtonText}>Refresh Now</Text>
+              <Text style={styles.refreshBtnText}>Refresh</Text>
             </TouchableOpacity>
           </View>
         )}
       </View>
 
       {/* Notifications */}
+      <Text style={styles.sectionTitle}>Notifications</Text>
       <View style={styles.sensorSection}>
-        <View style={styles.sensorHeader}>
-          <Icon name="notifications-outline" size={24} color="#f5a623" />
-          <Text style={styles.sensorTitle}>Notifications</Text>
-          {(() => {
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            const start = today.getTime();
-            const todays = (notificationEvents || []).filter(
-              (n) => n && typeof n.ts === "number" && n.ts >= start
-            );
-            const hasAny = todays.length > 0;
-            const color = !collectNotifications
-              ? "#FF3B30"
-              : !hasNotificationAccess
-                ? "#FF3B30"
-                : hasAny
-                  ? "#32D74B"
-                  : "#FFCC00";
-            return (
-              <View
-                style={[styles.statusIndicator, { backgroundColor: color }]}
-              />
-            );
-          })()}
-        </View>
-        {(() => {
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          const start = today.getTime();
-          const todays = (notificationEvents || []).filter(
-            (n) => n && typeof n.ts === "number" && n.ts >= start
-          );
-
-          if (!collectNotifications) {
-            return (
-              <View style={styles.sensorData}>
-                <Text style={styles.sensorDisabled}>
-                  Notification tracking is disabled in Settings.
-                </Text>
-              </View>
-            );
-          }
-
-          if (!hasNotificationAccess) {
-            return (
-              <View style={styles.sensorData}>
-                <Text style={styles.sensorDisabled}>
-                  Notification access is not granted. Enable it to track
-                  notification activity.
-                </Text>
-                <TouchableOpacity
-                  style={[
-                    styles.actionButton,
-                    { marginTop: 12, backgroundColor: "#f5a623" },
-                  ]}
-                  onPress={openNotificationAccess}
-                >
-                  <Text style={styles.actionButtonText}>
-                    Open Notification Access Settings
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            );
-          }
-
-          if (!todays.length) {
-            return (
-              <Text style={styles.sensorDisabled}>
-                No notifications logged today.
-              </Text>
-            );
-          }
-
-          const counts = {};
-          todays.forEach((n) => {
-            if (n.kind !== "posted") return;
-            const cat = n.category || "other";
-            counts[cat] = (counts[cat] || 0) + 1;
-          });
-          const rows = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-
-          const recent = todays.slice().reverse().slice(0, 5);
-
-          return (
-            <View style={styles.sensorData}>
-              <Text
-                style={[
-                  styles.sensorLabel,
-                  { marginTop: 8, fontFamily: "Archivo-SemiBold" },
-                ]}
-              >
-                Total events today:{" "}
-                <Text style={styles.sensorValue}>{todays.length}</Text>
-              </Text>
-              <Text
-                style={[
-                  styles.sensorLabel,
-                  { marginTop: 8, fontFamily: "Archivo-SemiBold" },
-                ]}
-              >
-                Total per Category:
-              </Text>
-              {rows.map(([cat, count]) => (
-                <Text key={cat} style={styles.sensorLabel}>
-                  {cat}: <Text style={styles.sensorValue}>{count}</Text>
-                </Text>
-              ))}
-              <Text
-                style={[
-                  styles.sensorLabel,
-                  { marginTop: 8, fontFamily: "Archivo-SemiBold" },
-                ]}
-              >
-                Recent events:
-              </Text>
-              {recent.map((n, idx) => (
-                <Text key={idx} style={styles.sensorLabel}>
-                  {new Date(n.ts).toLocaleTimeString()} — {n.appName} (
-                  {n.category || "other"}){" "}
-                  {n.kind === "removed" ? "[removed]" : ""}
-                  {n.title ? `: ${n.title}${n.text ? " - " + n.text : ""}` : ""}
-                </Text>
-              ))}
-            </View>
-          );
-        })()}
-      </View>
-
-      {/* Battery */}
-      <View style={styles.sensorSection}>
-        <View style={styles.sensorHeader}>
-          <Icon name="battery-charging-outline" size={24} color="#00ad03ff" />
-          <Text style={styles.sensorTitle}>Battery</Text>
-          <View
-            style={[
-              styles.statusIndicator,
-              {
-                backgroundColor: !collectBattery
-                  ? "#FF3B30"
-                  : batteryLevel != null && batteryLevel <= 0.2
-                    ? "#FF3B30"
-                    : batteryState === Battery.BatteryState.CHARGING ||
-                      batteryState === Battery.BatteryState.FULL
-                      ? "#32D74B"
-                      : "#FFCC00",
-              },
-            ]}
-          />
-        </View>
-        {collectBattery ? (
-          <View style={styles.sensorData}>
-            <Text style={styles.sensorLabel}>
-              Level:{" "}
-              <Text style={styles.sensorValue}>
-                {batteryLevel != null ? Math.round(batteryLevel * 100) : "—"}%
-              </Text>
+        {!collectNotifications ? (
+          <Text style={styles.sensorDisabled}>
+            Notification tracking is disabled in Settings.
+          </Text>
+        ) : !hasNotificationAccess ? (
+          <View>
+            <Text style={styles.sensorDisabled}>
+              Notification access is not granted.
             </Text>
-            <Text style={styles.sensorLabel}>
-              State:{" "}
-              <Text style={styles.sensorValue}>
-                {batteryState === Battery.BatteryState.CHARGING
-                  ? "Charging"
-                  : batteryState === Battery.BatteryState.FULL
-                    ? "Full"
-                    : batteryState === Battery.BatteryState.UNPLUGGED
-                      ? "Unplugged"
-                      : "Unknown"}
-              </Text>
-            </Text>
+            <TouchableOpacity
+              style={[styles.refreshBtn, { backgroundColor: "#f5a623" }]}
+              onPress={openNotificationAccess}
+            >
+              <Text style={styles.refreshBtnText}>Grant Access</Text>
+            </TouchableOpacity>
           </View>
         ) : (
-          <Text style={styles.sensorDisabled}>Battery collection disabled</Text>
+          <View>
+            <View style={styles.statRow}>
+              <View style={styles.statItem}>
+                <Icon name="notifications" size={20} color="#f5a623" />
+                <Text style={styles.statNumber}>{notifSummary.posted}</Text>
+                <Text style={styles.statLabel}>Received</Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.statItem}>
+                <Icon name="albums-outline" size={20} color="#15d6a9" />
+                <Text style={styles.statNumber}>{notifSummary.total}</Text>
+                <Text style={styles.statLabel}>Total Events</Text>
+              </View>
+            </View>
+            {notifSummary.topApps.length > 0 && (
+              <View style={styles.topAppsWrap}>
+                <Text style={styles.topAppsTitle}>Top Apps</Text>
+                {notifSummary.topApps.map(([app, count]) => (
+                  <View key={app} style={styles.topAppRow}>
+                    <Text style={styles.topAppName} numberOfLines={1}>
+                      {app}
+                    </Text>
+                    <View style={styles.topAppBarBg}>
+                      <View
+                        style={[
+                          styles.topAppBarFill,
+                          {
+                            width: `${Math.min(
+                              100,
+                              (count / (notifSummary.posted || 1)) * 100
+                            )}%`,
+                          },
+                        ]}
+                      />
+                    </View>
+                    <Text style={styles.topAppCount}>{count}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
         )}
+      </View>
+
+      {/* Sensor Status */}
+      <Text style={styles.sectionTitle}>Sensor Status</Text>
+      <View style={styles.sensorSection}>
+        <View style={styles.statusRow}>
+          <Icon name="location-outline" size={20} color="#15d6a9" />
+          <Text style={styles.statusName}>Location</Text>
+          <View
+            style={[
+              styles.statusBadge,
+              {
+                backgroundColor: isLocationEnabled ? "#1a3d2a" : "#3d1a1a",
+              },
+            ]}
+          >
+            <Text
+              style={[
+                styles.statusBadgeText,
+                { color: isLocationEnabled ? "#32D74B" : "#FF3B30" },
+              ]}
+            >
+              {isLocationEnabled ? "Active" : "Off"}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.statusRow}>
+          <Icon name="phone-portrait-outline" size={20} color="#FF9500" />
+          <Text style={styles.statusName}>Accelerometer</Text>
+          <View
+            style={[
+              styles.statusBadge,
+              {
+                backgroundColor: accelerometerActive ? "#1a3d2a" : "#3d1a1a",
+              },
+            ]}
+          >
+            <Text
+              style={[
+                styles.statusBadgeText,
+                { color: accelerometerActive ? "#32D74B" : "#FF3B30" },
+              ]}
+            >
+              {accelerometerActive ? "Active" : "Off"}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.statusRow}>
+          <MaterialIcons name="screen-rotation" size={20} color="#32D74B" />
+          <Text style={styles.statusName}>Gyroscope</Text>
+          <View
+            style={[
+              styles.statusBadge,
+              {
+                backgroundColor: gyroscopeActive ? "#1a3d2a" : "#3d1a1a",
+              },
+            ]}
+          >
+            <Text
+              style={[
+                styles.statusBadgeText,
+                { color: gyroscopeActive ? "#32D74B" : "#FF3B30" },
+              ]}
+            >
+              {gyroscopeActive ? "Active" : "Off"}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.statusRow}>
+          <Icon name="footsteps-outline" size={20} color="#5856D6" />
+          <Text style={styles.statusName}>Pedometer</Text>
+          <View
+            style={[
+              styles.statusBadge,
+              {
+                backgroundColor: isPedometerAvailable ? "#1a3d2a" : "#3d1a1a",
+              },
+            ]}
+          >
+            <Text
+              style={[
+                styles.statusBadgeText,
+                { color: isPedometerAvailable ? "#32D74B" : "#FF3B30" },
+              ]}
+            >
+              {isPedometerAvailable ? "Active" : "Off"}
+            </Text>
+          </View>
+        </View>
+        <View style={[styles.statusRow, { borderBottomWidth: 0 }]}>
+          <Icon name="battery-charging-outline" size={20} color="#00ad03ff" />
+          <Text style={styles.statusName}>Battery</Text>
+          <View
+            style={[
+              styles.statusBadge,
+              {
+                backgroundColor: collectBattery ? "#1a3d2a" : "#3d1a1a",
+              },
+            ]}
+          >
+            <Text
+              style={[
+                styles.statusBadgeText,
+                { color: collectBattery ? "#32D74B" : "#FF3B30" },
+              ]}
+            >
+              {collectBattery
+                ? batteryLevel != null
+                  ? Math.round(batteryLevel * 100) + "%"
+                  : "Active"
+                : "Off"}
+            </Text>
+          </View>
+        </View>
       </View>
     </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  Title: {
-    fontSize: 20,
-    marginVertical: 10,
-    fontFamily: "Archivo-Medium",
-    color: "#ccccccff",
-  },
-  contentView: { flex: 1 },
   contentTitle: {
     fontSize: 24,
     marginBottom: 20,
     color: "#ccccccff",
     fontFamily: "Archivo-SemiBold",
   },
-  infoText: {
-    fontSize: 16,
-    color: "#ccccccff",
-    lineHeight: 24,
-    marginVertical: 10,
-    padding: 10,
-    backgroundColor: "#222d3aff",
-    borderRadius: 8,
-    borderLeftWidth: 4,
-    borderLeftColor: "#FF9500",
-    fontFamily: "Archivo",
-  },
-  actionButton: {
-    marginTop: 20,
-    backgroundColor: "#32D74B",
-    padding: 12,
-    borderRadius: 8,
-    alignItems: "center",
-  },
-  actionButtonText: {
-    color: "#222d3aff",
-    fontSize: 16,
-    fontWeight: "600",
+  sectionTitle: {
+    fontSize: 20,
+    marginTop: 8,
+    marginBottom: 12,
     fontFamily: "Archivo-Medium",
+    color: "#ccccccff",
   },
   sensorSection: {
     backgroundColor: "#222d3aff",
     borderRadius: 12,
     padding: 16,
-    marginBottom: 36,
+    marginBottom: 20,
     elevation: 3,
   },
-  sensorHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  sensorTitle: {
-    fontSize: 18,
-    color: "#ccccccff",
-    marginLeft: 8,
-    flex: 1,
-    fontFamily: "Archivo",
-  },
-  statusIndicator: { width: 12, height: 12, borderRadius: 6 },
-  sensorData: {
-    backgroundColor: "#293646ff",
-    borderRadius: 8,
-    padding: 12,
-    fontFamily: "Archivo",
-  },
-  sensorLabel: {
-    fontSize: 14,
-    color: "#abababff",
-    marginBottom: 4,
-    fontFamily: "Archivo-Medium",
-  },
-  sensorValue: { fontSize: 14, color: "#15d6a9", fontFamily: "Archivo-Medium" },
   sensorDisabled: {
     fontSize: 14,
     color: "#cd3c34ff",
@@ -592,6 +419,212 @@ const styles = StyleSheet.create({
     backgroundColor: "#293646ff",
     borderRadius: 8,
     marginVertical: 5,
+    fontFamily: "Archivo",
+  },
+  // Summary tiles
+  tilesRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  tile: {
+    flex: 1,
+    backgroundColor: "#222d3aff",
+    borderRadius: 12,
+    padding: 16,
+    alignItems: "center",
+    marginHorizontal: 4,
+    elevation: 3,
+  },
+  tileNumber: {
+    fontSize: 28,
+    color: "#ccccccff",
+    fontFamily: "Archivo-SemiBold",
+    marginTop: 8,
+  },
+  tileLabel: {
+    fontSize: 13,
+    color: "#abababff",
+    fontFamily: "Archivo-Medium",
+    marginTop: 2,
+  },
+  // Stat row (unlock/lock/total)
+  statRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-around",
+    backgroundColor: "#293646ff",
+    borderRadius: 10,
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    marginBottom: 12,
+  },
+  statItem: {
+    alignItems: "center",
+    flex: 1,
+  },
+  statNumber: {
+    fontSize: 22,
+    color: "#ccccccff",
+    fontFamily: "Archivo-SemiBold",
+    marginTop: 4,
+  },
+  statLabel: {
+    fontSize: 12,
+    color: "#abababff",
+    fontFamily: "Archivo-Medium",
+    marginTop: 2,
+  },
+  statDivider: {
+    width: 1,
+    height: 36,
+    backgroundColor: "#3a4a5aff",
+  },
+  // Time row (last unlock/lock)
+  timeRow: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    marginBottom: 4,
+  },
+  timeItem: {
+    alignItems: "center",
+  },
+  timeLabel: {
+    fontSize: 12,
+    color: "#abababff",
+    fontFamily: "Archivo-Medium",
+  },
+  timeValue: {
+    fontSize: 16,
+    color: "#15d6a9",
+    fontFamily: "Archivo-SemiBold",
+    marginTop: 2,
+  },
+  // Refresh button
+  refreshBtn: {
+    marginTop: 12,
+    padding: 10,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  refreshBtnText: {
+    color: "#222d3aff",
+    fontSize: 14,
+    fontFamily: "Archivo-Medium",
+  },
+  // Top apps (notifications)
+  topAppsWrap: {
+    backgroundColor: "#293646ff",
+    borderRadius: 10,
+    padding: 12,
+    marginTop: 4,
+  },
+  topAppsTitle: {
+    fontSize: 14,
+    color: "#abababff",
+    fontFamily: "Archivo-SemiBold",
+    marginBottom: 8,
+  },
+  topAppRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  topAppName: {
+    width: 100,
+    fontSize: 13,
+    color: "#ccccccff",
+    fontFamily: "Archivo-Medium",
+  },
+  topAppBarBg: {
+    flex: 1,
+    height: 8,
+    backgroundColor: "#1a2a3aff",
+    borderRadius: 4,
+    marginHorizontal: 8,
+    overflow: "hidden",
+  },
+  topAppBarFill: {
+    height: 8,
+    backgroundColor: "#f5a623",
+    borderRadius: 4,
+  },
+  topAppCount: {
+    fontSize: 13,
+    color: "#f5a623",
+    fontFamily: "Archivo-SemiBold",
+    width: 30,
+    textAlign: "right",
+  },
+  // Sensor status rows
+  statusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#293646ff",
+  },
+  statusName: {
+    flex: 1,
+    fontSize: 15,
+    color: "#ccccccff",
+    fontFamily: "Archivo-Medium",
+    marginLeft: 12,
+  },
+  statusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  statusBadgeText: {
+    fontSize: 12,
+    fontFamily: "Archivo-SemiBold",
+  },
+  // Hero section
+  heroSection: {
+    marginBottom: 24,
+  },
+  heroHeading: {
+    fontSize: 28,
+    color: "#ccccccff",
+    fontFamily: "Archivo-SemiBold",
+    lineHeight: 36,
+    marginBottom: 12,
+  },
+  heroAccent: {
+    fontStyle: "italic",
+    color: "#15d6a9",
+    fontFamily: "Archivo-SemiBold",
+  },
+  heroBody: {
+    fontSize: 15,
+    color: "#abababff",
+    lineHeight: 22,
+    fontFamily: "Archivo-Medium",
+    marginBottom: 16,
+  },
+  encryptedCard: {
+    backgroundColor: "#222d3aff",
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#15d6a933",
+  },
+  encryptedIconRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  encryptedTitle: {
+    fontSize: 16,
+    color: "#ccccccff",
+    fontFamily: "Archivo-SemiBold",
+    marginLeft: 8,
+  },
+  encryptedBody: {
+    fontSize: 14,
+    color: "#abababff",
+    lineHeight: 20,
     fontFamily: "Archivo",
   },
 });

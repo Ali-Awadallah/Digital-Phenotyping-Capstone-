@@ -224,15 +224,17 @@ export default function SettingsScreen() {
           name="settings-outline"
           size={28}
           color="#15d6a9"
-          style={{ marginRight: 8, marginBottom: 14 }}
+          style={{ marginRight: 8, marginBottom: 8 }}
         />
         <Text style={styles.contentTitle}>Settings</Text>
       </View>
 
+      <View style={{ height: 1, backgroundColor: "#6464644a", marginVertical: 5 }} />
+
       {/* Server Configuration */}
       <View style={{ flexDirection: "row", alignItems: "center" }}>
-        <MaterialIcons name="dns" size={20} color="#4A90D9" />
-        <Text style={styles.sectionTitle}>Server Configuration</Text>
+        <MaterialIcons name="dns" size={20} color="#4A90D9" style={{ marginTop: 8 }} />
+        <Text style={styles.sectionTitle}>Server Configuration [DEV]</Text>
       </View>
       <View style={[styles.sensorSection, { borderColor: '#4a90d967' }]}>
         <Text style={styles.hcDescription}>
@@ -318,10 +320,9 @@ export default function SettingsScreen() {
       </View>
 
       <Text style={styles.sectionTitle}>Sensor Toggles</Text>
-      <Text style={styles.infoText}>
-        Choose which sensors to collect. Turning a sensor off stops data collection immediately.
-      </Text>
       <View style={styles.sensorSection}>
+        <Text style={styles.hcDescription}>
+          Choose which sensors to collect. Turning a sensor off stops data collection immediately.        </Text>
         <Row
           label="Location"
           icon={<Icon name="location-outline" size={20} color="#15d6a9" style={{ marginRight: 8 }} />}
@@ -492,7 +493,7 @@ const styles = StyleSheet.create({
   contentView: { flex: 1 },
   contentTitle: {
     fontSize: 24,
-    marginBottom: 20,
+    marginBottom: 8,
     color: "#ccccccff",
     fontFamily: "Archivo-SemiBold",
   },
@@ -512,7 +513,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#222d3aff",
     borderRadius: 12,
     padding: 16,
-    marginBottom: 36,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: "#15d6a96e",
     elevation: 3,

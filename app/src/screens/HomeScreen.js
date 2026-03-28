@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import {
   View,
   Text,
@@ -28,7 +29,29 @@ export default function HomeScreen() {
     openUsageAccess,
     fetchUsage,
     collectAppUsage,
+    stepsToday,
+    collectPedometer,
+    screenEvents,
+    collectScreenEvents,
+    notificationEvents,
+    collectNotifications,
   } = useApp();
+
+  const todayStart = useMemo(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }, []);
+
+  const todayNotifCount = useMemo(
+    () => (notificationEvents || []).filter((e) => e.ts >= todayStart).length,
+    [notificationEvents, todayStart]
+  );
+
+  const todayScreenCount = useMemo(
+    () => (screenEvents || []).filter((e) => e.ts >= todayStart).length,
+    [screenEvents, todayStart]
+  );
 
   const formatDuration = (mins) => {
     const safe = Math.max(0, parseInt(mins || 0, 10));
@@ -41,19 +64,73 @@ export default function HomeScreen() {
   return (
     <ScreenContainer>
       <View style={{ flexDirection: "row", alignItems: "center" }}>
-        <MaterialIcons
-          name="phone-iphone"
-          size={28}
-          color="#15d6a9"
-          style={{ marginRight: 8, marginBottom: 14 }}
-        />
         <Text style={styles.contentTitle}>Activity Overview</Text>
       </View>
+
+      <View style={{ height: 1, backgroundColor: "#6464644a", marginVertical: 5 }} />
+
+      <Text style={styles.heroBody}>
+        Your digital phenotype is currently being monitored for behavioral shifts.
+        These insights are designed to support your well-being.
+      </Text>
+
+      {/* Step Count Card */}
+      {collectPedometer && (
+        <View style={styles.stepCard}>
+          <View style={styles.stepCardRow}>
+            <View style={styles.stepIconWrap}>
+              <MaterialIcons name="directions-run" size={28} color="#15d6a9" />
+            </View>
+            <View style={styles.stepInfo}>
+              <Text style={styles.stepCount}>
+                {stepsToday != null ? stepsToday.toLocaleString() : "0"}
+              </Text>
+              <Text style={styles.stepLabel}>Steps today</Text>
+            </View>
+          </View>
+          <Text style={styles.stepTitle}>Physical Vitality</Text>
+          <Text style={styles.stepSubtitle}>
+            {stepsToday >= 10000
+              ? "Great job! You've hit your daily goal."
+              : stepsToday >= 5000
+                ? "Movement patterns are consistent with high energy levels."
+                : stepsToday >= 2000
+                  ? "Keep going — you're making good progress today."
+                  : "Start moving to boost your vitality."}
+          </Text>
+          <View style={styles.stepBarBg}>
+            <View
+              style={[
+                styles.stepBarFill,
+                { width: `${Math.min(100, ((stepsToday || 0) / 2000) * 100)}%` },
+              ]}
+            />
+          </View>
+        </View>
+      )}
 
       <View style={styles.timeCard}>
         <Icon name="time-outline" size={30} color="#15d6a9" />
         <Text style={styles.timeValue}>{formatDuration(totalScreenTime)}</Text>
         <Text style={styles.timeLabel}>Total Screen Time Today</Text>
+      </View>
+
+      {/* Event counts row */}
+      <View style={styles.eventRow}>
+        <View style={styles.eventTile}>
+          <MaterialIcons name="notifications-active" size={24} color="#15d6a9" />
+          <Text style={styles.eventCount}>
+            {collectNotifications ? todayNotifCount : "—"}
+          </Text>
+          <Text style={styles.eventLabel}>Notifications</Text>
+        </View>
+        <View style={styles.eventTile}>
+          <MaterialIcons name="screen-lock-portrait" size={24} color="#15d6a9" />
+          <Text style={styles.eventCount}>
+            {collectScreenEvents ? todayScreenCount : "—"}
+          </Text>
+          <Text style={styles.eventLabel}>Screen Events</Text>
+        </View>
       </View>
 
       {collectAppUsage && !hasUsageAccess && Platform.OS === "android" ? (
@@ -79,6 +156,7 @@ export default function HomeScreen() {
         </View>
       ) : null}
 
+      <View style={{ height: 1, backgroundColor: "#6464644a", marginVertical: 5 }} />
       <Text style={styles.sectionHeader}>Top App Usage</Text>
       {!collectAppUsage ? (
         <Text style={styles.sensorDisabled}>App usage collection disabled</Text>
@@ -94,10 +172,10 @@ export default function HomeScreen() {
               minutes > 90
                 ? "#FF3B30"
                 : minutes > 60
-                ? "#FF9500"
-                : minutes > 30
-                ? "#FFCC00"
-                : "#32D74B";
+                  ? "#FF9500"
+                  : minutes > 30
+                    ? "#FFCC00"
+                    : "#32D74B";
             return (
               <View key={index} style={styles.appItem}>
                 {app.icon ? (
@@ -163,10 +241,18 @@ const styles = StyleSheet.create({
   contentView: { flex: 1 },
   contentTitle: {
     fontSize: 24,
-    marginBottom: 20,
+    marginBottom: 8,
     color: "#ccccccff",
     fontFamily: "Archivo-SemiBold",
   },
+  heroBody: {
+    fontSize: 15,
+    color: "#abababff",
+    lineHeight: 22,
+    fontFamily: "Archivo-Medium",
+    marginVertical: 8,
+  },
+
   timeCard: {
     backgroundColor: "#222d3aff",
     padding: 20,
@@ -252,5 +338,88 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     fontFamily: "Archivo-Medium",
+  },
+  stepCard: {
+    backgroundColor: "#222d3aff",
+    borderRadius: 12,
+    padding: 16,
+    marginVertical: 24,
+    borderWidth: 1,
+    borderColor: "#15d6a97a",
+  },
+  stepCardRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  stepIconWrap: {
+    backgroundColor: "#15d6a91a",
+    borderRadius: 12,
+    padding: 10,
+    marginRight: 16,
+  },
+  stepInfo: {
+    flex: 1,
+    alignItems: "flex-end",
+  },
+  stepCount: {
+    fontSize: 32,
+    color: "#ccccccff",
+    fontFamily: "Archivo-SemiBold",
+  },
+  stepLabel: {
+    fontSize: 14,
+    color: "#888",
+    fontFamily: "Archivo-Medium",
+  },
+  stepTitle: {
+    fontSize: 16,
+    color: "#ccccccff",
+    fontFamily: "Archivo-SemiBold",
+    marginBottom: 4,
+  },
+  stepSubtitle: {
+    fontSize: 13,
+    color: "#888",
+    fontFamily: "Archivo-Medium",
+    marginBottom: 12,
+  },
+  stepBarBg: {
+    height: 8,
+    backgroundColor: "#1a2530",
+    borderRadius: 4,
+    overflow: "hidden",
+  },
+  stepBarFill: {
+    height: 8,
+    backgroundColor: "#15d6a9",
+    borderRadius: 4,
+  },
+  eventRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 24,
+    gap: 12,
+  },
+  eventTile: {
+    flex: 1,
+    backgroundColor: "#222d3aff",
+    borderRadius: 12,
+    padding: 16,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#15d6a97a",
+  },
+  eventCount: {
+    fontSize: 28,
+    color: "#ccccccff",
+    fontFamily: "Archivo-SemiBold",
+    marginTop: 8,
+  },
+  eventLabel: {
+    fontSize: 13,
+    color: "#888",
+    fontFamily: "Archivo-Medium",
+    marginTop: 2,
   },
 });

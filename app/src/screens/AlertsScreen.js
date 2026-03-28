@@ -16,10 +16,11 @@ export default function AlertsScreen() {
           name="alert-circle-outline"
           size={28}
           color="#FF3B30"
-          style={{ marginRight: 8, marginBottom: 16 }}
+          style={{ marginRight: 8, marginBottom: 8 }}
         />
         <Text style={styles.contentTitle}>Alerts</Text>
       </View>
+      <View style={{ height: 1, backgroundColor: "#6464644a", marginVertical: 5 }} />
       {alerts.length === 0 ? (
         <View
           style={[
@@ -33,7 +34,7 @@ export default function AlertsScreen() {
             color="#FF3B30"
           />
           <Text style={[styles.bodyText, { marginTop: 12 }]}>
-            No alerts yet.
+            No alerts yet
           </Text>
         </View>
       ) : (
@@ -101,23 +102,20 @@ const styles = StyleSheet.create({
   contentView: { flex: 1 },
   contentTitle: {
     fontSize: 24,
-    marginBottom: 20,
+    marginBottom: 8,
     color: "#ccccccff",
     fontFamily: "Archivo-SemiBold",
   },
   sensorSection: {
-    backgroundColor: "#222d3aff",
     borderRadius: 12,
     padding: 16,
-    marginBottom: 36,
-    borderLeftWidth: 4,
-    borderLeftColor: "#15d6a9",
+    marginVertical: 36,
   },
   bodyText: {
     fontSize: 18,
-    color: "#ccccccff",
+    color: "rgb(183, 183, 183)",
     marginBottom: 15,
-    fontWeight: "500",
+    fontFamily: "Archivo-Medium",
   },
   actionButton: {
     marginTop: 20,
@@ -129,13 +127,13 @@ const styles = StyleSheet.create({
   actionButtonText: {
     color: "#222d3aff",
     fontSize: 16,
-    fontWeight: "600",
     fontFamily: "Archivo-Medium",
   },
   alertItem: {
     backgroundColor: "#222d3aff",
     borderRadius: 10,
     padding: 12,
+    marginTop: 16,
     marginBottom: 12,
     borderLeftWidth: 4,
     borderLeftColor: "#FF3B30",

@@ -65,6 +65,8 @@ export default function ProfileScreen() {
         <Text style={styles.contentTitle}>User Profile</Text>
       </View>
 
+      <View style={{ height: 1, backgroundColor: "#6464644a", marginVertical: 5 }} />
+
       {/* Connection Status */}
       <View style={[styles.statusBanner, participant ? styles.statusConnected : styles.statusDisconnected]}>
         <MaterialIcons
@@ -199,7 +201,7 @@ const styles = StyleSheet.create({
   headerRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 16,
+    marginBottom: 8,
   },
   contentTitle: {
     fontSize: 24,
@@ -212,7 +214,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingVertical: 10,
     paddingHorizontal: 14,
-    marginBottom: 16,
+    marginVertical: 16,
   },
   statusConnected: {
     backgroundColor: "#32d74b15",

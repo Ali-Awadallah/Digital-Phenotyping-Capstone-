@@ -44,7 +44,7 @@ function MyTabBar({ state, descriptors, navigation }) {
         const iconName =
           route.name === "Home"
             ? "home-outline"
-            : route.name === "Sensors"
+            : route.name === "Activity"
               ? "analytics-outline"
               : route.name === "Settings"
                 ? "settings-outline"
@@ -111,7 +111,7 @@ function Tabs() {
       screenOptions={{ headerShown: false }}
       initialRouteName="Home"
     >
-      <Tab.Screen name="Sensors" component={SensorsScreen} />
+      <Tab.Screen name="Activity" component={SensorsScreen} />
       <Tab.Screen name="Alerts" component={AlertsScreen} />
       <Tab.Screen name="Home" component={HomeScreen} />
       <Tab.Screen name="Settings" component={SettingsScreen} />
