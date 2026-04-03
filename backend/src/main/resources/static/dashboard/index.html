@@ -174,7 +174,7 @@
                                 <tr>
                                     <th>ID</th>
                                     <th>Name</th>
-                                    <th>Device ID</th>
+                                    <th>Devices</th>
                                     <th>Status</th>
                                     <th>Risk Level</th>
                                     <th>Actions</th>
@@ -191,27 +191,35 @@
             <!-- Alerts View -->
             <section id="view-alerts" class="view">
                 <div class="view-header">
-                    <div class="filter-group">
-                        <select id="alert-filter" class="form-select">
-                            <option value="all">All Alerts</option>
-                            <option value="active">Active (Unacknowledged)</option>
-                            <option value="acknowledged">Acknowledged</option>
-                        </select>
-                        <select id="alert-source-filter" class="form-select">
-                            <option value="all">Phone + Watch</option>
-                            <option value="phone">Phone Only</option>
-                            <option value="watch">Watch Only</option>
-                        </select>
-                        <select id="alert-participant-filter" class="form-select">
-                            <option value="all">All Participants</option>
-                        </select>
-                        <select id="alert-limit-filter" class="form-select">
-                            <option value="200">200 Alerts</option>
-                            <option value="1000">1000 Alerts</option>
-                            <option value="10000" selected>10000 Alerts</option>
-                            <option value="all">All Alerts</option>
-                        </select>
-                        <button class="btn btn-secondary" id="refresh-alerts-btn" style="margin-left: 10px;">Refresh</button>
+                    <div class="alerts-filter-toolbar">
+                        <div class="filter-group">
+                            <select id="alert-filter" class="form-select">
+                                <option value="all">All Alerts</option>
+                                <option value="active">Active (Unacknowledged)</option>
+                                <option value="acknowledged">Acknowledged</option>
+                            </select>
+                            <select id="alert-source-filter" class="form-select">
+                                <option value="all">Phone + Watch</option>
+                                <option value="phone">Phone Only</option>
+                                <option value="watch">Watch Only</option>
+                            </select>
+                            <select id="alert-participant-filter" class="form-select">
+                                <option value="all">All Participants</option>
+                            </select>
+                            <select id="alert-limit-filter" class="form-select">
+                                <option value="200">200 Alerts</option>
+                                <option value="1000">1000 Alerts</option>
+                                <option value="10000" selected>10000 Alerts</option>
+                                <option value="all">All Alerts</option>
+                            </select>
+                            <button class="btn btn-secondary" id="refresh-alerts-btn">Refresh</button>
+                        </div>
+                        <div class="filter-presets">
+                            <button class="btn btn-sm btn-secondary alert-preset-btn" data-preset="all">All</button>
+                            <button class="btn btn-sm btn-secondary alert-preset-btn" data-preset="phone_active">Phone Active</button>
+                            <button class="btn btn-sm btn-secondary alert-preset-btn" data-preset="watch_active">Watch Active</button>
+                            <button class="btn btn-sm btn-secondary alert-preset-btn" data-preset="acknowledged">Acknowledged</button>
+                        </div>
                     </div>
                 </div>
                 <div class="alerts-list" id="alerts-list">
@@ -274,6 +282,7 @@
             <!-- Settings View -->
             <section id="view-settings" class="view">
                 <div class="view-header">
+                    <button class="btn btn-primary" id="refresh-admin-security-btn">Refresh Security Panel</button>
                 </div>
                 <div class="settings-grid">
                     <div class="card">
@@ -297,18 +306,87 @@
                     </div>
                     <div class="card">
                         <div class="card-header">
-                            <h3>Alert Thresholds</h3>
+                            <h3>Security Policy</h3>
                         </div>
                         <div class="card-body">
                             <div class="form-group">
-                                <label>Inactivity Threshold (hours)</label>
-                                <input type="number" class="form-input" id="inactivity-threshold" value="24">
+                                <label>Password Min Length</label>
+                                <input type="text" class="form-input" id="security-password-min-length" readonly>
                             </div>
                             <div class="form-group">
-                                <label>Risk Score Threshold</label>
-                                <input type="number" class="form-input" id="risk-threshold" value="75">
+                                <label>Failed Login Lockout</label>
+                                <input type="text" class="form-input" id="security-lockout-policy" readonly>
                             </div>
-                            <button class="btn btn-primary">Save Settings</button>
+                            <div class="form-group">
+                                <label>Active Users / Sessions / Locked Accounts</label>
+                                <input type="text" class="form-input" id="security-status-summary" readonly>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Active Sessions</h3>
+                        </div>
+                        <div class="card-body">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>User</th>
+                                        <th>Role</th>
+                                        <th>IP</th>
+                                        <th>Last Seen</th>
+                                        <th>Expires</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="admin-sessions-table">
+                                    <tr><td colspan="7" style="text-align:center; color:#888;">No active sessions</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Login Lockouts</h3>
+                        </div>
+                        <div class="card-body">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Username</th>
+                                        <th>Failed Count</th>
+                                        <th>Last IP</th>
+                                        <th>Locked Until</th>
+                                        <th>Last Failed</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="admin-lockouts-table">
+                                    <tr><td colspan="5" style="text-align:center; color:#888;">No lockouts</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Security Audit Trail</h3>
+                        </div>
+                        <div class="card-body">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Time</th>
+                                        <th>Actor</th>
+                                        <th>Action</th>
+                                        <th>Target</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="admin-audit-table">
+                                    <tr><td colspan="4" style="text-align:center; color:#888;">No audit events</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
             </section>
         </main>
@@ -328,7 +406,7 @@
                     <input type="text" class="form-input" id="modal-participant-name">
                 </div>
                 <div class="form-group">
-                    <label>Device ID</label>
+                    <label>Primary Device ID</label>
                     <input type="text" class="form-input" id="modal-device-id" readonly>
                 </div>
                 <div class="form-group">
@@ -355,7 +433,7 @@
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeParticipantModal()">Cancel</button>
-                <button class="btn btn-primary" onclick="saveParticipant()">Save Changes</button>
+                <button class="btn btn-primary" id="modal-save-participant-btn" onclick="saveParticipant()">Save Changes</button>
             </div>
         </div>
     </div>
@@ -370,9 +448,10 @@
             </div>
             <div class="modal-body">
                 <p id="zones-participant-info" style="margin-bottom: 16px; color: #666;"></p>
+                <p id="zones-readonly-note" class="role-hint hidden" style="margin-bottom: 16px;">Read-only mode: red-zone creation and deletion are disabled for your role.</p>
                 
                 <!-- Add New Zone Form -->
-                <div class="card" style="margin-bottom: 20px;">
+                <div class="card" id="add-zone-card" style="margin-bottom: 20px;">
                     <div class="card-header">
                         <h3>Add New Red Zone</h3>
                     </div>

@@ -3,7 +3,14 @@ services:
   mysql:
     image: mysql:8.0
     container_name: dp-mysql
-    command: --default-time-zone='+03:00'
+    command:
+      - --default-time-zone=+03:00
+      - --early-plugin-load=keyring_file.so
+      - --keyring_file_data=/var/lib/mysql-keyring/keyring
+      - --default_table_encryption=ON
+      - --innodb_redo_log_encrypt=ON
+      - --innodb_undo_log_encrypt=ON
+      - --binlog_encryption=ON
     environment:
       MYSQL_ROOT_PASSWORD: rootpassword
       MYSQL_DATABASE: aware_db
@@ -14,6 +21,7 @@ services:
       - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
+      - mysql_keyring:/var/lib/mysql-keyring
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
       interval: 10s
@@ -35,8 +43,33 @@ services:
       DATABASE_HOST: mysql
       DATABASE_PORT: "3306"
       DATABASE_NAME: aware_db
-      DATABASE_USER: aware_user
-      DATABASE_PASSWORD: password
+      DATABASE_USER: ${DATABASE_USER:-aware_user}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-password}
+      DATABASE_PASSWORD_FILE: ${DATABASE_PASSWORD_FILE:-}
+      DATABASE_SSL_MODE: ${DATABASE_SSL_MODE:-disable}
+      DATABASE_SSL_CA_CERT_PATH: ${DATABASE_SSL_CA_CERT_PATH:-}
+      DATABASE_SSL_CLIENT_KEY_PATH: ${DATABASE_SSL_CLIENT_KEY_PATH:-}
+      DATABASE_SSL_CLIENT_CERT_PATH: ${DATABASE_SSL_CLIENT_CERT_PATH:-}
+      API_KEY_INGEST: ${API_KEY_INGEST:-}
+      API_KEY_ADMIN: ${API_KEY_ADMIN:-}
+      API_KEY_INGEST_FILE: ${API_KEY_INGEST_FILE:-}
+      API_KEY_ADMIN_FILE: ${API_KEY_ADMIN_FILE:-}
+      APP_ADMIN_USERNAME: ${APP_ADMIN_USERNAME:-admin}
+      APP_ADMIN_PASSWORD: ${APP_ADMIN_PASSWORD:-capstone}
+      APP_ADMIN_PASSWORD_FILE: ${APP_ADMIN_PASSWORD_FILE:-}
+      APP_DOCTOR_USERNAME: ${APP_DOCTOR_USERNAME:-doctor}
+      APP_DOCTOR_PASSWORD: ${APP_DOCTOR_PASSWORD:-Doctor@12345}
+      AUTH_SESSION_TTL_HOURS: ${AUTH_SESSION_TTL_HOURS:-12}
+      AUTH_ATTEMPT_WINDOW_MINUTES: ${AUTH_ATTEMPT_WINDOW_MINUTES:-15}
+      AUTH_MAX_FAILED_ATTEMPTS: ${AUTH_MAX_FAILED_ATTEMPTS:-5}
+      AUTH_LOCKOUT_MINUTES: ${AUTH_LOCKOUT_MINUTES:-15}
+      PASSWORD_MIN_LENGTH: ${PASSWORD_MIN_LENGTH:-12}
+      PASSWORD_REQUIRE_UPPERCASE: ${PASSWORD_REQUIRE_UPPERCASE:-true}
+      PASSWORD_REQUIRE_LOWERCASE: ${PASSWORD_REQUIRE_LOWERCASE:-true}
+      PASSWORD_REQUIRE_DIGIT: ${PASSWORD_REQUIRE_DIGIT:-true}
+      PASSWORD_REQUIRE_SPECIAL: ${PASSWORD_REQUIRE_SPECIAL:-true}
+      DATA_ENCRYPTION_KEY_B64: ${DATA_ENCRYPTION_KEY_B64:-}
+      DATA_ENCRYPTION_KEY_B64_FILE: ${DATA_ENCRYPTION_KEY_B64_FILE:-}
       SERVER_HOST: "0.0.0.0"
       AWARE_CONFIG_PATH: /app/aware-config.json
       TZ: Asia/Qatar
@@ -60,8 +93,8 @@ services:
       DB_HOST: mysql
       DB_PORT: "3306"
       DB_NAME: aware_db
-      DB_USER: aware_user
-      DB_PASSWORD: password
+      DB_USER: ${SIGNATURE_DB_USER:-aware_user}
+      DB_PASSWORD: ${SIGNATURE_DB_PASSWORD:-password}
       PYTHONUNBUFFERED: "1"
       LOOP_INTERVAL_SEC: "300"
       LSTM_EPOCHS: "4"
@@ -75,7 +108,7 @@ services:
       mysql:
         condition: service_healthy
       backend:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - ./models:/app/models
     extra_hosts:
@@ -89,6 +122,7 @@ services:
 
 volumes:
   mysql_data:
+  mysql_keyring:
 
 networks:
   dp-network:

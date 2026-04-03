@@ -30,6 +30,11 @@ import io.vertx.ext.web.RoutingContext
 class MainVerticle : AbstractVerticle() {
 
   private val logger = KotlinLogging.logger {}
+  private val adminApiPrefixes = listOf("/participants", "/zones", "/alerts", "/signature-alerts", "/users", "/admin")
+  private val allRoles = setOf("admin", "analyst", "viewer", "doctor", "ingest")
+  private val adminWriteRoles = setOf("admin", "analyst")
+  private val adminReadRoles = setOf("admin", "analyst", "viewer", "doctor")
+  private val ingestRoles = setOf("admin", "ingest")
 
   private lateinit var parameters: JsonObject
   private lateinit var httpServer: HttpServer
@@ -53,6 +58,7 @@ class MainVerticle : AbstractVerticle() {
         .allowedMethod(HttpMethod.OPTIONS)
         .allowedHeader("Content-Type")
         .allowedHeader("Authorization")
+        .allowedHeader("X-API-Key")
     )
 
     router.route(HttpMethod.GET, "/testing").handler { ctx ->
@@ -85,12 +91,148 @@ class MainVerticle : AbstractVerticle() {
 
         // ---- API SUBROUTER (put BEFORE any "/:studyNumber/:studyKey" routes) ----------------------------------------------------------------------------------------------
         val api = Router.router(vertx)
+        installApiAuth(api, serverConfig)
 
         // GET /api/testing  -> { "ok": true }
         api.get("/testing").handler { ctx ->
           ctx.response()
             .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
             .end(JsonObject().put("ok", true).encode())
+        }
+
+        // POST /api/auth/login
+        api.post("/auth/login").handler { ctx ->
+          try {
+            val body = requireJsonBody(ctx)
+            val username = body.getString("username", "").trim()
+            val password = body.getString("password", "")
+            if (username.isEmpty() || password.isEmpty()) {
+              respondError(ctx, 400, "username and password are required")
+              return@handler
+            }
+
+            val payload = JsonObject()
+              .put("username", username)
+              .put("password", password)
+              .put("client_ip", ctx.request().remoteAddress()?.hostAddress())
+              .put("user_agent", ctx.request().getHeader("User-Agent"))
+            vertx.eventBus().request<JsonObject>("authLogin", payload) { ar ->
+              if (ar.succeeded()) {
+                respondJson(ctx, 200, ar.result().body())
+              } else {
+                val failureCode = if (ar.cause().message?.contains("Invalid credentials", ignoreCase = true) == true) {
+                  401
+                } else {
+                  500
+                }
+                respondError(ctx, failureCode, ar.cause().message)
+              }
+            }
+          } catch (e: Exception) {
+            respondError(ctx, 400, e.message)
+          }
+        }
+
+        // GET /api/auth/me
+        api.get("/auth/me").handler { ctx ->
+          val user = ctx.get<JsonObject>("auth_user")
+          if (user == null) {
+            respondError(ctx, 401, "Unauthorized")
+          } else {
+            respondJson(ctx, 200, JsonObject().put("ok", true).put("user", user))
+          }
+        }
+
+        // POST /api/auth/logout
+        api.post("/auth/logout").handler { ctx ->
+          val token = extractBearerToken(ctx)
+          if (token.isNullOrBlank()) {
+            respondOk(ctx)
+            return@handler
+          }
+          requestJsonObject(ctx, "authLogout", JsonObject().put("token", token))
+        }
+
+        // GET /api/users
+        api.get("/users").handler { ctx ->
+          vertx.eventBus().request<JsonArray>("listAppUsers", JsonObject()) { ar ->
+            if (ar.succeeded()) {
+              ctx.response()
+                .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                .end(ar.result().body().encode())
+            } else {
+              respondError(ctx, 500, ar.cause().message)
+            }
+          }
+        }
+
+        // POST /api/users (create/update)
+        api.post("/users").handler { ctx ->
+          try {
+            val body = requireJsonBody(ctx)
+            val actor = ctx.get<JsonObject>("auth_user")?.getString("username", "admin") ?: "admin"
+            body.put("actor", actor)
+            requestJsonObject(ctx, "upsertAppUser", body)
+          } catch (e: Exception) {
+            respondError(ctx, 400, e.message)
+          }
+        }
+
+        // GET /api/admin/security-status
+        api.get("/admin/security-status").handler { ctx ->
+          requestJsonObject(ctx, "getSecurityStatus", JsonObject())
+        }
+
+        // GET /api/admin/sessions?limit=200
+        api.get("/admin/sessions").handler { ctx ->
+          val limit = ctx.queryParam("limit").firstOrNull()?.toIntOrNull() ?: 200
+          vertx.eventBus().request<JsonArray>("listAuthSessions", JsonObject().put("limit", limit)) { ar ->
+            if (ar.succeeded()) {
+              ctx.response()
+                .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                .end(ar.result().body().encode())
+            } else {
+              respondError(ctx, 500, ar.cause().message)
+            }
+          }
+        }
+
+        // POST /api/admin/sessions/:id/revoke
+        api.post("/admin/sessions/:id/revoke").handler { ctx ->
+          val sessionId = ctx.pathParam("id").toLongOrNull()
+          if (sessionId == null) {
+            respondError(ctx, 400, "Invalid session id")
+            return@handler
+          }
+          requestJsonObject(ctx, "revokeAuthSessionById", JsonObject().put("id", sessionId))
+        }
+
+        // GET /api/admin/audit?limit=200
+        api.get("/admin/audit").handler { ctx ->
+          val limit = ctx.queryParam("limit").firstOrNull()?.toIntOrNull() ?: 200
+          vertx.eventBus().request<JsonArray>("getSecurityAuditEvents", JsonObject().put("limit", limit)) { ar ->
+            if (ar.succeeded()) {
+              ctx.response()
+                .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                .end(ar.result().body().encode())
+            } else {
+              respondError(ctx, 500, ar.cause().message)
+            }
+          }
+        }
+
+        // GET /api/admin/login-lockouts?limit=100
+        api.get("/admin/login-lockouts").handler { ctx ->
+          val limit = ctx.queryParam("limit").firstOrNull()?.toIntOrNull() ?: 100
+          vertx.eventBus().request<JsonArray>("getLoginLockouts", JsonObject().put("limit", limit)) { ar ->
+            if (ar.succeeded()) {
+              ctx.response()
+                .putHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                .end(ar.result().body().encode())
+            } else {
+              respondError(ctx, 500, ar.cause().message)
+            }
+          }
         }
 
         // POST /api/events  { device_id, ts, value }  -> insert via event bus
@@ -605,7 +747,9 @@ class MainVerticle : AbstractVerticle() {
         // POST /api/alerts/:alertId/acknowledge - Acknowledge alert
         api.post("/alerts/:alertId/acknowledge").handler { ctx ->
           val alertId = ctx.pathParam("alertId")
-          val acknowledgedBy = ctx.queryParam("by").firstOrNull() ?: "admin"
+          val acknowledgedBy = ctx.get<JsonObject>("auth_user")?.getString("username")
+            ?: ctx.queryParam("by").firstOrNull()
+            ?: "admin"
           eventBus.request<JsonObject>("acknowledgeAlert", JsonObject()
             .put("alert_id", alertId)
             .put("acknowledged_by", acknowledgedBy)
@@ -655,7 +799,9 @@ class MainVerticle : AbstractVerticle() {
         // POST /api/signature-alerts/:id/acknowledge?by=admin
         api.post("/signature-alerts/:id/acknowledge").handler { ctx ->
           val id = ctx.pathParam("id").toLong()
-          val by = ctx.queryParam("by").firstOrNull() ?: "admin"
+          val by = ctx.get<JsonObject>("auth_user")?.getString("username")
+            ?: ctx.queryParam("by").firstOrNull()
+            ?: "admin"
 
           vertx.eventBus().request<JsonObject>(
             "acknowledgeSignatureAlert",
@@ -1302,6 +1448,163 @@ class MainVerticle : AbstractVerticle() {
       return serverConfig.getInteger("external_server_port")
     }
     return serverConfig.getInteger("server_port")
+  }
+
+  private fun installApiAuth(api: Router, serverConfig: JsonObject) {
+    val ingestKey = SecretResolver.get("API_KEY_INGEST", serverConfig.getString("api_key_ingest"))
+    val adminKey = SecretResolver.get("API_KEY_ADMIN", serverConfig.getString("api_key_admin"))
+    val keysConfigured = ingestKey != null || adminKey != null
+    if (!keysConfigured) {
+      logger.warn { "API key auth is disabled (API_KEY_INGEST/API_KEY_ADMIN not set). Session auth is still enabled for admin APIs." }
+    }
+
+    api.route().handler { ctx ->
+      if (ctx.request().method() == HttpMethod.OPTIONS) {
+        ctx.next()
+        return@handler
+      }
+
+      val path = ctx.request().path().removePrefix("/api")
+      if (path == "/auth/login") {
+        ctx.next()
+        return@handler
+      }
+
+      val method = ctx.request().method()
+      val bearerToken = extractBearerToken(ctx)
+      val explicitApiKey = extractApiKey(ctx)
+      val providedApiKey = explicitApiKey ?: bearerToken
+      val keyMatchesAdmin = adminKey != null && providedApiKey == adminKey
+      val keyMatchesIngest = ingestKey != null && providedApiKey == ingestKey
+
+      val requiredRoles = requiredRolesForPath(path, method)
+      val isAdminPath = isAdminApiPath(path) || path == "/auth/me" || path == "/auth/logout"
+
+      if (isAdminPath) {
+        if (keyMatchesAdmin) {
+          ctx.put(
+            "auth_user",
+            JsonObject()
+              .put("username", "api_key_admin")
+              .put("role", "admin")
+              .put("auth_mode", "api_key")
+          )
+          ctx.next()
+          return@handler
+        }
+
+        if (bearerToken.isNullOrBlank()) {
+          respondError(ctx, 401, "Unauthorized")
+          return@handler
+        }
+
+        authorizeWithSessionToken(ctx, bearerToken, requiredRoles)
+        return@handler
+      }
+
+      if (keyMatchesIngest || keyMatchesAdmin) {
+        val role = if (keyMatchesAdmin) "admin" else "ingest"
+        ctx.put(
+          "auth_user",
+          JsonObject()
+            .put("username", if (keyMatchesAdmin) "api_key_admin" else "api_key_ingest")
+            .put("role", role)
+            .put("auth_mode", "api_key")
+        )
+        ctx.next()
+        return@handler
+      }
+
+      if (!keysConfigured) {
+        if (bearerToken.isNullOrBlank()) {
+          ctx.next()
+        } else {
+          authorizeWithSessionToken(ctx, bearerToken, ingestRoles)
+        }
+        return@handler
+      }
+
+      if (!bearerToken.isNullOrBlank()) {
+        authorizeWithSessionToken(ctx, bearerToken, ingestRoles)
+      } else {
+        respondError(ctx, 401, "Unauthorized")
+      }
+    }
+  }
+
+  private fun isAdminApiPath(path: String): Boolean {
+    return adminApiPrefixes.any { prefix -> path == prefix || path.startsWith("$prefix/") }
+  }
+
+  private fun requiredRolesForPath(path: String, method: HttpMethod): Set<String> {
+    if (path == "/auth/me" || path == "/auth/logout") return allRoles
+    if (path == "/users" || path.startsWith("/users/")) return setOf("admin")
+    if (path == "/admin" || path.startsWith("/admin/")) return setOf("admin")
+    if (path == "/participants" || path.startsWith("/participants/")) {
+      return if (method == HttpMethod.GET) setOf("admin", "analyst", "viewer", "doctor") else adminWriteRoles
+    }
+    if (isAdminApiPath(path)) {
+      return if (method == HttpMethod.GET) adminReadRoles else adminWriteRoles
+    }
+    return ingestRoles
+  }
+
+  private fun authorizeWithSessionToken(
+    ctx: RoutingContext,
+    token: String,
+    allowedRoles: Set<String>
+  ) {
+    vertx.eventBus().request<JsonObject>("authValidateToken", JsonObject().put("token", token)) { ar ->
+      if (ar.failed()) {
+        respondError(ctx, 401, "Unauthorized")
+        return@request
+      }
+
+      val body = ar.result().body()
+      if (!body.getBoolean("ok", false)) {
+        respondError(ctx, 401, "Unauthorized")
+        return@request
+      }
+
+      val user = body.getJsonObject("user") ?: JsonObject()
+      val role = user.getString("role", "").trim().lowercase()
+      if (!allowedRoles.contains(role)) {
+        respondError(ctx, 403, "Forbidden")
+        return@request
+      }
+
+      ctx.put("auth_user", user.put("auth_mode", "session"))
+      ctx.next()
+    }
+  }
+
+  private fun extractBearerToken(ctx: RoutingContext): String? {
+    val authHeader = ctx.request().getHeader("Authorization")
+    if (!authHeader.isNullOrBlank() && authHeader.startsWith("Bearer ", ignoreCase = true)) {
+      return authHeader.substringAfter("Bearer ").trim().takeIf { it.isNotEmpty() }
+    }
+    return null
+  }
+
+  private fun extractApiKey(ctx: RoutingContext): String? {
+    val xApiKey = ctx.request().getHeader("X-API-Key")?.trim()
+    if (!xApiKey.isNullOrEmpty()) return xApiKey
+
+    val queryKey = ctx.queryParam("api_key").firstOrNull()?.trim()
+    if (!queryKey.isNullOrEmpty()) return queryKey
+
+    // Optional fallback for clients that cannot easily set headers/query params.
+    val body = try {
+      ctx.body().asJsonObject()
+    } catch (_: Exception) {
+      null
+    }
+    if (body != null) {
+      val bodyKey = body.getString("api_key")?.trim()
+      if (!bodyKey.isNullOrEmpty()) return bodyKey
+    }
+
+    return null
   }
 
   private fun respondJson(ctx: RoutingContext, statusCode: Int, payload: JsonObject) {

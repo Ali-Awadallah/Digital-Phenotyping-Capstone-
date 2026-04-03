@@ -5,7 +5,7 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useApp } from "../context/AppContext";
 import ScreenContainer from "../components/ScreenContainer";
 import HealthConnectService from "../services/HealthConnectService";
-import { getApiBase, setApiBase, buildApiUrl, testConnection } from "../../awareAPI";
+import { getApiBase, setApiBase, getApiIngestKey, setApiIngestKey, buildApiUrl, testConnection } from "../../awareAPI";
 import PrivacyPolicyModal from "../components/PrivacyPolicyModal";
 import TermsConditionsModal from "../components/TermsConditionsModal";
 
@@ -41,6 +41,7 @@ export default function SettingsScreen() {
   // Server config state
   const [serverIp, setServerIp] = useState("");
   const [serverPort, setServerPort] = useState("8080");
+  const [ingestApiKey, setIngestApiKeyState] = useState("");
   const [serverStatus, setServerStatus] = useState(null); // null | 'testing' | 'connected' | 'failed'
   const [serverError, setServerError] = useState("");
 
@@ -52,6 +53,7 @@ export default function SettingsScreen() {
   useEffect(() => {
     (async () => {
       const saved = await getApiBase();
+      const savedIngestKey = await getApiIngestKey();
       // Parse IP and port from saved URL like "http://192.168.1.50:8080/api"
       try {
         const url = new URL(saved);
@@ -60,6 +62,7 @@ export default function SettingsScreen() {
       } catch {
         setServerIp(saved);
       }
+      setIngestApiKeyState(savedIngestKey || "");
     })();
   }, []);
 
@@ -75,6 +78,7 @@ export default function SettingsScreen() {
     const result = await testConnection(newUrl);
     if (result.ok) {
       await setApiBase(newUrl);
+      await setApiIngestKey(ingestApiKey || "");
       setServerStatus("connected");
       Alert.alert("✅ Connected!", `Server at ${newUrl} is reachable.\nURL saved successfully.`);
     } else {
@@ -267,6 +271,20 @@ export default function SettingsScreen() {
               keyboardType="number-pad"
             />
           </View>
+        </View>
+
+        <View style={{ marginTop: 12 }}>
+          <Text style={styles.serverInputLabel}>Ingest API Key (optional)</Text>
+          <TextInput
+            style={styles.serverInput}
+            value={ingestApiKey}
+            onChangeText={setIngestApiKeyState}
+            placeholder="Set to backend API_KEY_INGEST when auth is enabled"
+            placeholderTextColor="#555"
+            autoCapitalize="none"
+            autoCorrect={false}
+            secureTextEntry
+          />
         </View>
 
         {/* Status indicator */}

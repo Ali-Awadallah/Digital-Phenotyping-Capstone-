@@ -133,6 +133,29 @@ export const setAPIBaseURL = async (url) => {
     return await BackgroundService.setAPIBaseURL(url);
 };
 
+/**
+ * Set ingest API key used by native background sender.
+ * @param {string} apiKey
+ * @returns {Promise<boolean>} true if set successfully
+ */
+export const setAPIIngestKey = async (apiKey) => {
+    if (!isAvailable()) {
+        return false;
+    }
+    return await BackgroundService.setAPIIngestKey(apiKey);
+};
+
+/**
+ * Get ingest API key used by native background sender.
+ * @returns {Promise<string|null>}
+ */
+export const getAPIIngestKey = async () => {
+    if (!isAvailable()) {
+        return null;
+    }
+    return await BackgroundService.getAPIIngestKey();
+};
+
 export default {
     isAvailable,
     startBackgroundCollection,
@@ -145,4 +168,6 @@ export default {
     setDeviceId,
     getDeviceId,
     setAPIBaseURL,
+    setAPIIngestKey,
+    getAPIIngestKey,
 };

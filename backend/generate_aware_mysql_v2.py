@@ -33,7 +33,7 @@ import haversine  # noqa: F401 (kept for compatibility if you used it elsewhere)
 
 from sqlalchemy import (
     create_engine, MetaData, Table, Column, BigInteger, Integer, Float, String,
-    Text, JSON, DateTime, text
+    Text, DateTime, text
 )
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -106,7 +106,7 @@ WATCH_TABLE_NAMES = {
     "wearable_respiratory",
     "watch_day_profiles",
 }
-CORE_TABLE_NAMES = {"participants", "anomaly_hours"}
+CORE_TABLE_NAMES = {"participants", "participant_devices", "anomaly_hours"}
 DERIVED_TABLE_NAMES = {
     "engine_state",
     "hourly_features",
@@ -209,6 +209,17 @@ def define_tables(metadata: MetaData):
         Column("updated_at", Text, nullable=False),
     )
 
+    participant_devices = Table(
+        "participant_devices", metadata,
+        Column("id", BigInteger, primary_key=True, autoincrement=True),
+        Column("participant_id", String(128), nullable=False),
+        Column("device_id", String(128), nullable=False),
+        Column("device_type", String(32), nullable=False),
+        Column("is_primary", Integer, nullable=False),
+        Column("created_at", DateTime, nullable=True, server_default=text("CURRENT_TIMESTAMP")),
+        Column("updated_at", DateTime, nullable=True, server_default=text("CURRENT_TIMESTAMP")),
+    )
+
     anomaly_hours = Table(
         "anomaly_hours", metadata,
         Column("id", BigInteger, primary_key=True, autoincrement=True),
@@ -253,7 +264,6 @@ def define_tables(metadata: MetaData):
         Column("longitude", Float, nullable=True),
         Column("altitude", Float, nullable=True),
         Column("accuracy", Float, nullable=True),
-        Column("coordinates", JSON, nullable=True),
         Column("created_at", DateTime, nullable=True, server_default=text("CURRENT_TIMESTAMP")),
     )
 
@@ -369,6 +379,7 @@ def define_tables(metadata: MetaData):
 
     return {
         "participants": participants,
+        "participant_devices": participant_devices,
         "anomaly_hours": anomaly_hours,
         "accelerometer": accelerometer,
         "gyroscope": gyroscope,
@@ -409,6 +420,17 @@ def require_tables_exist(conn, table_names: set[str]):
             + ", ".join(missing)
             + ". Start the Kotlin backend first so it creates schema on startup."
         )
+
+
+def read_table_columns(conn, table_names: set[str]) -> dict[str, set[str]]:
+    schema: dict[str, set[str]] = {}
+    existing_tables = {row[0] for row in conn.execute(text("SHOW TABLES")).fetchall()}
+    for table_name in table_names:
+        if table_name not in existing_tables:
+            continue
+        rows = conn.execute(text(f"SHOW COLUMNS FROM `{table_name}`")).fetchall()
+        schema[table_name] = {str(row[0]) for row in rows}
+    return schema
 
 
 def reset_tables_for_mode(selected_tables: set[str]) -> list[str]:
@@ -470,12 +492,16 @@ def prompt_historical_days(default_days: int) -> int:
         return days
 
 
-def bulk_insert(conn, table: Table, rows, chunk_size: int):
+def bulk_insert(conn, table: Table, rows, chunk_size: int, allowed_columns: set[str] | None = None):
     if not rows:
         return 0
     total = 0
     for i in range(0, len(rows), chunk_size):
         chunk = rows[i:i + chunk_size]
+        if allowed_columns is not None:
+            chunk = [{k: v for k, v in row.items() if k in allowed_columns} for row in chunk]
+        if not chunk:
+            continue
         conn.execute(table.insert(), chunk)
         total += len(chunk)
     return total
@@ -871,7 +897,6 @@ def generate_hour_data(device_id, device_type, hour_start_dt, anomaly_type=None,
                 "longitude": lon,
                 "altitude": -16.8,
                 "accuracy": float(random.uniform(5, 25)),
-                "coordinates": [lon, lat],
                 "created_at": now_dt(),
             })
 
@@ -937,16 +962,56 @@ def generate_device_data(device_id, device_type, start_date, end_date, anom_dict
 
 
 def get_or_create_participant_specs(conn, participant_count: int, base_start_date: datetime):
-    existing_rows = conn.execute(
-        text(
+    existing_rows = []
+    if table_exists(conn, "participant_devices"):
+        existing_rows = conn.execute(
+            text(
+                """
+                SELECT
+                    pd.participant_id,
+                    pd.device_id,
+                    CASE
+                        WHEN LOWER(pd.device_id) LIKE 'phone_%' THEN 'phone'
+                        WHEN LOWER(pd.device_id) LIKE 'watch_%' THEN 'watch'
+                        ELSE LOWER(COALESCE(pd.device_type, 'unknown'))
+                    END AS device_type,
+                    p.name
+                FROM participant_devices pd
+                LEFT JOIN participants p
+                  ON p.participant_id = pd.participant_id
+                WHERE pd.device_id IS NOT NULL
+                ORDER BY pd.participant_id, pd.device_type, pd.device_id
+                """
+            )
+        ).mappings().all()
+    if (not existing_rows) and table_exists(conn, "participants"):
+        has_device_type = column_exists(conn, "participants", "device_type")
+        if has_device_type:
+            device_type_expr = """
+                CASE
+                    WHEN LOWER(device_id) LIKE 'phone_%' THEN 'phone'
+                    WHEN LOWER(device_id) LIKE 'watch_%' THEN 'watch'
+                    ELSE LOWER(COALESCE(device_type, 'unknown'))
+                END AS device_type
             """
-            SELECT participant_id, device_id, COALESCE(device_type, 'unknown') AS device_type, name
-            FROM participants
-            WHERE device_id IS NOT NULL
-            ORDER BY participant_id, device_type, device_id
+        else:
+            device_type_expr = """
+                CASE
+                    WHEN LOWER(device_id) LIKE 'phone_%' THEN 'phone'
+                    WHEN LOWER(device_id) LIKE 'watch_%' THEN 'watch'
+                    ELSE 'unknown'
+                END AS device_type
             """
-        )
-    ).mappings().all()
+        existing_rows = conn.execute(
+            text(
+                f"""
+                SELECT participant_id, device_id, {device_type_expr}, name
+                FROM participants
+                WHERE device_id IS NOT NULL
+                ORDER BY participant_id, device_type, device_id
+                """
+            )
+        ).mappings().all()
 
     specs_by_participant = {}
     for row in existing_rows:
@@ -965,6 +1030,9 @@ def get_or_create_participant_specs(conn, participant_count: int, base_start_dat
             spec["phone_device_id"] = row["device_id"]
         elif device_type == "watch":
             spec["watch_device_id"] = row["device_id"]
+        elif spec["phone_device_id"] is None:
+            # Legacy schemas may not carry device_type; default unknown devices to phone.
+            spec["phone_device_id"] = row["device_id"]
 
     specs = list(specs_by_participant.values())
     if len(specs) >= participant_count:
@@ -1000,6 +1068,22 @@ def table_exists(conn, table_name: str) -> bool:
             """
         ),
         {"table_name": table_name},
+    ).scalar()
+    return bool(result)
+
+
+def column_exists(conn, table_name: str, column_name: str) -> bool:
+    result = conn.execute(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM information_schema.columns
+            WHERE table_schema = DATABASE()
+              AND table_name = :table_name
+              AND column_name = :column_name
+            """
+        ),
+        {"table_name": table_name, "column_name": column_name},
     ).scalar()
     return bool(result)
 
@@ -1118,7 +1202,18 @@ def next_hour_for_device(conn, device_id: str, latest_hour: datetime, bootstrap_
     return last_hour + timedelta(hours=1)
 
 
-def insert_hour_batch(conn, tables, participant_id: str, participant_name: str, device_id: str, device_type: str, hour_start: datetime, selected_tables: set[str], signature_focus: str):
+def insert_hour_batch(
+    conn,
+    tables,
+    participant_id: str,
+    participant_name: str,
+    device_id: str,
+    device_type: str,
+    hour_start: datetime,
+    selected_tables: set[str],
+    signature_focus: str,
+    db_columns: dict[str, set[str]],
+):
     bulk = empty_bulk()
     anomaly_type = choose_anomaly_for_hour(hour_start, signature_focus=signature_focus) if device_type == "phone" else None
     prime_device_state_from_db(conn, device_id, hour_start)
@@ -1129,26 +1224,26 @@ def insert_hour_batch(conn, tables, participant_id: str, participant_name: str, 
         append_daily_rows(device_id, device_type, hour_start, hour_start + timedelta(days=1), bulk, signature_focus=signature_focus)
     bulk = prune_bulk_for_mode(bulk, selected_tables)
 
-    participant_row = build_participant_row(participant_id, device_id, device_type, participant_name)
-    conn.execute(text("DELETE FROM participants WHERE device_id = :d"), {"d": device_id})
-    conn.execute(tables["participants"].insert(), participant_row)
+    upsert_participant_and_device(conn, db_columns, participant_id, participant_name, device_id, device_type)
 
     if device_type == "phone" and anomaly_type is not None:
         ts = int(hour_start.timestamp() * 1000)
+        anomaly_doc = {
+            "device_id": device_id,
+            "hour_start_ts": ts,
+            "hour_start_utc": format_utc_time(ts),
+            "anomaly_type": anomaly_type,
+            "created_at": now_iso(),
+        }
+        anomaly_doc = {k: v for k, v in anomaly_doc.items() if k in db_columns["anomaly_hours"]}
         conn.execute(
             tables["anomaly_hours"].insert(),
-            [{
-                "device_id": device_id,
-                "hour_start_ts": ts,
-                "hour_start_utc": format_utc_time(ts),
-                "anomaly_type": anomaly_type,
-                "created_at": now_iso(),
-            }],
+            [anomaly_doc],
         )
 
     inserted = {}
     for name, rows in bulk.items():
-        count = bulk_insert(conn, tables[name], rows, CHUNK_SIZE)
+        count = bulk_insert(conn, tables[name], rows, CHUNK_SIZE, db_columns.get(name))
         if count:
             inserted[name] = count
     return inserted, anomaly_type
@@ -1164,6 +1259,7 @@ def run_live_stream(engine, tables, sleep_sec: int, lag_minutes: int, bootstrap_
             latest_hour = latest_complete_hour(now_dt, lag_minutes)
             total_hours = 0
             with engine.begin() as conn:
+                db_columns = read_table_columns(conn, set(CORE_TABLE_NAMES | selected_tables))
                 participant_specs = get_or_create_participant_specs(conn, DEVICES, latest_hour)
                 if selected_tables & PHONE_TABLE_NAMES:
                     ensure_red_zones_for_participants(conn, participant_specs)
@@ -1186,6 +1282,7 @@ def run_live_stream(engine, tables, sleep_sec: int, lag_minutes: int, bootstrap_
                                 hour,
                                 selected_tables,
                                 signature_focus,
+                                db_columns,
                             )
                             total_hours += 1
                             if inserted:
@@ -1201,17 +1298,111 @@ def run_live_stream(engine, tables, sleep_sec: int, lag_minutes: int, bootstrap_
 
 
 def build_participant_row(participant_id, device_id, device_type, name):
+    lowered_device_id = (device_id or "").lower()
+    normalized_type = (device_type or "unknown").lower()
+    if lowered_device_id.startswith("phone_"):
+        normalized_type = "phone"
+    elif lowered_device_id.startswith("watch_"):
+        normalized_type = "watch"
+
     return {
         "participant_id": participant_id,
-        "device_id": device_id,
-        "device_type": device_type,
         "name": name,
         "red_zone_radius": 300,
         "status": "active",
         "risk_level": "low",
-        "created_at": now_iso(),
-        "updated_at": now_iso(),
+        "device_id": device_id,
+        "device_type": normalized_type,
+        "created_at": now_dt(),
+        "updated_at": now_dt(),
     }
+
+
+def build_participant_device_row(participant_id, device_id, device_type):
+    lowered_device_id = (device_id or "").lower()
+    normalized_type = (device_type or "unknown").lower()
+    if lowered_device_id.startswith("phone_"):
+        normalized_type = "phone"
+    elif lowered_device_id.startswith("watch_"):
+        normalized_type = "watch"
+
+    return {
+        "participant_id": participant_id,
+        "device_id": device_id,
+        "device_type": normalized_type,
+        "is_primary": 1,
+        "created_at": now_dt(),
+        "updated_at": now_dt(),
+    }
+
+
+def upsert_participant_and_device(
+    conn,
+    db_columns: dict[str, set[str]],
+    participant_id: str,
+    participant_name: str,
+    device_id: str | None,
+    device_type: str,
+):
+    participant_doc = build_participant_row(participant_id, device_id, device_type, participant_name)
+    participant_allowed = db_columns.get("participants", set())
+    participant_doc = {k: v for k, v in participant_doc.items() if k in participant_allowed}
+
+    if participant_doc:
+        insert_cols = [c for c in ["participant_id", "name", "red_zone_radius", "status", "risk_level", "device_id", "device_type", "created_at", "updated_at"] if c in participant_doc]
+        if insert_cols:
+            col_sql = ", ".join(f"`{c}`" for c in insert_cols)
+            val_sql = ", ".join(f":{c}" for c in insert_cols)
+            update_sql = []
+            for col in insert_cols:
+                if col in {"participant_id", "created_at"}:
+                    continue
+                if col == "name":
+                    update_sql.append("`name` = IF(VALUES(`name`) = 'Unknown', `name`, VALUES(`name`))")
+                elif col == "device_id":
+                    update_sql.append("`device_id` = COALESCE(`device_id`, VALUES(`device_id`))")
+                elif col == "device_type":
+                    update_sql.append("`device_type` = IF(VALUES(`device_type`) = 'unknown', `device_type`, VALUES(`device_type`))")
+                else:
+                    update_sql.append(f"`{col}` = VALUES(`{col}`)")
+
+            sql = f"INSERT INTO participants ({col_sql}) VALUES ({val_sql})"
+            if update_sql:
+                sql += " ON DUPLICATE KEY UPDATE " + ", ".join(update_sql)
+            conn.execute(text(sql), {c: participant_doc[c] for c in insert_cols})
+
+    if not device_id:
+        return
+    if "participant_devices" not in db_columns:
+        return
+
+    device_doc = build_participant_device_row(participant_id, device_id, device_type)
+    device_doc = {k: v for k, v in device_doc.items() if k in db_columns["participant_devices"]}
+    insert_cols = [c for c in ["participant_id", "device_id", "device_type", "is_primary", "created_at", "updated_at"] if c in device_doc]
+    if not insert_cols:
+        return
+
+    col_sql = ", ".join(f"`{c}`" for c in insert_cols)
+    val_sql = ", ".join(f":{c}" for c in insert_cols)
+    update_sql = []
+    for col in insert_cols:
+        if col in {"created_at"}:
+            continue
+        if col == "participant_id":
+            update_sql.append("`participant_id` = VALUES(`participant_id`)")
+        elif col == "device_type":
+            update_sql.append("`device_type` = IF(VALUES(`device_type`) = 'unknown', `device_type`, VALUES(`device_type`))")
+        elif col == "updated_at":
+            update_sql.append("`updated_at` = VALUES(`updated_at`)")
+        elif col == "is_primary":
+            update_sql.append("`is_primary` = VALUES(`is_primary`)")
+        elif col != "device_id":
+            update_sql.append(f"`{col}` = VALUES(`{col}`)")
+
+    sql = f"INSERT INTO participant_devices ({col_sql}) VALUES ({val_sql})"
+    if update_sql:
+        sql += " ON DUPLICATE KEY UPDATE " + ", ".join(update_sql)
+    conn.execute(text(sql), {c: device_doc[c] for c in insert_cols})
 
 
 def append_daily_rows(device_id, device_type, day, end_date, bulk, signature_focus="both"):
@@ -1385,6 +1576,7 @@ def run(mode_override=None):
             if args.truncate or should_truncate:
                 truncate_all(conn, reset_tables_for_mode(selected_tables))
 
+            db_columns = read_table_columns(conn, set(CORE_TABLE_NAMES | selected_tables))
             participant_specs = get_or_create_participant_specs(conn, DEVICES, start_date)
             if selected_tables & PHONE_TABLE_NAMES:
                 ensure_red_zones_for_participants(conn, participant_specs)
@@ -1407,23 +1599,44 @@ def run(mode_override=None):
                     bulk = generate_device_data(device_id, device_type, start_date, end_date, anom_dict, signature_focus=signature_focus)
                     bulk = prune_bulk_for_mode(bulk, selected_tables)
 
-                    participant_row = build_participant_row(spec["participant_id"], device_id, device_type, spec["name"])
-                    conn.execute(text("DELETE FROM participants WHERE device_id = :d"), {"d": device_id})
-                    conn.execute(tables["participants"].insert(), participant_row)
+                    upsert_participant_and_device(
+                        conn,
+                        db_columns,
+                        spec["participant_id"],
+                        spec["name"],
+                        device_id,
+                        device_type,
+                    )
 
-                    inserted_anom = bulk_insert(conn, tables["anomaly_hours"], anom_rows, CHUNK_SIZE) if device_type == "phone" else 0
+                    inserted_anom = (
+                        bulk_insert(
+                            conn,
+                            tables["anomaly_hours"],
+                            anom_rows,
+                            CHUNK_SIZE,
+                            db_columns.get("anomaly_hours"),
+                        )
+                        if device_type == "phone"
+                        else 0
+                    )
                     if inserted_anom:
                         print(f"[{spec['participant_id']}][{device_type}] anomaly_hours: {inserted_anom}")
 
                     for name, rows in bulk.items():
-                        inserted = bulk_insert(conn, tables[name], rows, CHUNK_SIZE)
+                        inserted = bulk_insert(conn, tables[name], rows, CHUNK_SIZE, db_columns.get(name))
                         if inserted:
                             print(f"[{spec['participant_id']}][{device_type}] {name}: {inserted}")
+
+        print("\nMySQL data generation complete.")
+        print("Tip for LSTM training: exclude hours in anomaly_hours when building your training set.")
+        return
 
         print("\n✅ MySQL data generation complete!")
         print("Tip for LSTM training: exclude hours in anomaly_hours when building your training set.")
 
     except SQLAlchemyError as e:
+        print("DB error:", str(e))
+        return
         print("❌ DB error:", str(e))
 
 
