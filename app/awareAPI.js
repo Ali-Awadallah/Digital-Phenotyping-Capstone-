@@ -274,7 +274,10 @@ export async function getParticipant(deviceId) {
     const url = await addApiKeyToUrl(`${API_BASE}/participants/${encodeURIComponent(deviceId)}`);
     const res = await fetch(url, { headers });
     if (res.status === 404) return null;
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.warn("getParticipant: server returned", res.status);
+      return null;
+    }
     return await res.json();
   } catch (e) {
     console.warn("getParticipant error:", e);

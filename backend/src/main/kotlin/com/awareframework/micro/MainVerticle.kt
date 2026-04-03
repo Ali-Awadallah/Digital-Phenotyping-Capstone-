@@ -1493,6 +1493,26 @@ class MainVerticle : AbstractVerticle() {
           return@handler
         }
 
+        // Allow mobile app to read participant profiles by device ID
+        // Supports both ingest-key auth and no-auth (when keys aren't configured)
+        if (method == HttpMethod.GET && path.startsWith("/participants/")) {
+          if (keyMatchesIngest) {
+            ctx.put(
+              "auth_user",
+              JsonObject()
+                .put("username", "api_key_ingest")
+                .put("role", "ingest")
+                .put("auth_mode", "api_key")
+            )
+            ctx.next()
+            return@handler
+          }
+          if (!keysConfigured) {
+            ctx.next()
+            return@handler
+          }
+        }
+
         if (bearerToken.isNullOrBlank()) {
           respondError(ctx, 401, "Unauthorized")
           return@handler
