@@ -99,6 +99,21 @@ def json_dumps_safe(value) -> str:
 def ensure_tables(conn):
     statements = [
         """
+        CREATE TABLE IF NOT EXISTS participant_devices (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            participant_id VARCHAR(128) NOT NULL,
+            device_id VARCHAR(128) NOT NULL,
+            device_type VARCHAR(32) NOT NULL DEFAULT 'unknown',
+            is_primary BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_participant_device (participant_id, device_id),
+            UNIQUE KEY uq_participant_devices_device_id (device_id),
+            KEY idx_participant_devices_participant (participant_id),
+            KEY idx_participant_devices_type (device_type)
+        )
+        """,
+        """
         CREATE TABLE IF NOT EXISTS engine_state (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
             participant_id VARCHAR(128) NOT NULL,
@@ -145,6 +160,8 @@ def ensure_tables(conn):
         CREATE TABLE IF NOT EXISTS signature_alerts (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
             participant_id VARCHAR(128) NOT NULL,
+            device_id VARCHAR(128) NULL,
+            source_type VARCHAR(16) NULL,
             hour_start DATETIME NOT NULL,
             hour_start_iso VARCHAR(32) NULL,
             hour_start_ts BIGINT NULL,
@@ -192,6 +209,21 @@ def ensure_tables(conn):
         _execute(conn, "ALTER TABLE signature_alerts ADD COLUMN hour_start_iso VARCHAR(32) NULL")
     if not _column_exists(conn, "signature_alerts", "hour_start_ts"):
         _execute(conn, "ALTER TABLE signature_alerts ADD COLUMN hour_start_ts BIGINT NULL")
+    if not _column_exists(conn, "signature_alerts", "device_id"):
+        _execute(conn, "ALTER TABLE signature_alerts ADD COLUMN device_id VARCHAR(128) NULL AFTER participant_id")
+    if not _column_exists(conn, "signature_alerts", "source_type"):
+        _execute(conn, "ALTER TABLE signature_alerts ADD COLUMN source_type VARCHAR(16) NULL AFTER device_id")
+    _execute(
+        conn,
+        """
+        UPDATE signature_alerts
+        SET source_type = CASE
+            WHEN UPPER(COALESCE(alert_code, '')) LIKE 'W%' THEN 'watch'
+            ELSE 'phone'
+        END
+        WHERE source_type IS NULL OR TRIM(source_type) = ''
+        """,
+    )
     for column_name, ddl in [
         ("sleep_episode_n", "ALTER TABLE wearable_daily_features ADD COLUMN sleep_episode_n INT NULL"),
         ("sleep_midpoint_hour", "ALTER TABLE wearable_daily_features ADD COLUMN sleep_midpoint_hour DOUBLE NULL"),
@@ -233,9 +265,55 @@ def fetch_participant_devices(conn) -> list[dict]:
             conn,
             """
             SELECT
+                pd.participant_id,
+                MAX(CASE WHEN LOWER(COALESCE(pd.device_type, '')) = 'phone' THEN pd.device_id END) AS phone_device_id,
+                MAX(CASE WHEN LOWER(COALESCE(pd.device_type, '')) = 'watch' THEN pd.device_id END) AS watch_device_id,
+                MIN(pd.device_id) AS primary_device_id,
+                MIN(p.name) AS name
+            FROM participant_devices pd
+            LEFT JOIN participants p
+              ON p.participant_id = pd.participant_id
+            WHERE pd.participant_id IS NOT NULL
+            GROUP BY pd.participant_id
+            ORDER BY pd.participant_id
+            """,
+        )
+        if not df.empty:
+            rows = []
+            for _, row in df.iterrows():
+                participant_id = row.get("participant_id")
+                if not participant_id:
+                    continue
+                phone_device_id = row.get("phone_device_id")
+                watch_device_id = row.get("watch_device_id")
+                primary_device_id = row.get("primary_device_id")
+                if phone_device_id is None and watch_device_id is None and primary_device_id is not None:
+                    phone_device_id = primary_device_id
+                fallback_device_id = phone_device_id or watch_device_id
+                if fallback_device_id is None:
+                    continue
+                rows.append(
+                    {
+                        "participant_id": str(participant_id),
+                        "phone_device_id": str(phone_device_id) if phone_device_id else None,
+                        "watch_device_id": str(watch_device_id) if watch_device_id else None,
+                        "name": row.get("name"),
+                    }
+                )
+            if rows:
+                return rows
+    except Exception:
+        pass
+
+    try:
+        df = _query_df(
+            conn,
+            """
+            SELECT
                 participant_id,
                 MAX(CASE WHEN LOWER(COALESCE(device_type, '')) = 'phone' THEN device_id END) AS phone_device_id,
                 MAX(CASE WHEN LOWER(COALESCE(device_type, '')) = 'watch' THEN device_id END) AS watch_device_id,
+                MIN(device_id) AS primary_device_id,
                 MIN(name) AS name
             FROM participants
             WHERE participant_id IS NOT NULL
@@ -251,8 +329,10 @@ def fetch_participant_devices(conn) -> list[dict]:
                     continue
                 phone_device_id = row.get("phone_device_id")
                 watch_device_id = row.get("watch_device_id")
-                fallback_device_id = phone_device_id or watch_device_id
-                if fallback_device_id is None:
+                primary_device_id = row.get("primary_device_id")
+                if phone_device_id is None and watch_device_id is None and primary_device_id is not None:
+                    phone_device_id = primary_device_id
+                if phone_device_id is None and watch_device_id is None:
                     continue
                 rows.append(
                     {

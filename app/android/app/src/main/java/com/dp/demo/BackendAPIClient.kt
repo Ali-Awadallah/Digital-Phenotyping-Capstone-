@@ -18,6 +18,7 @@ object BackendAPIClient {
     private const val TAG = "BackendAPIClient"
     private const val PREF_NAME = "dp_prefs"
     private const val PREF_API_BASE = "api_base_url"
+    private const val PREF_API_KEY_INGEST = "api_key_ingest"
     private const val PREF_DEVICE_ID = "device_id"
     private const val DEFAULT_API_BASE = "http://192.168.10.3:8080/api"
     
@@ -41,6 +42,18 @@ object BackendAPIClient {
         context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
             .edit()
             .putString(PREF_API_BASE, url)
+            .apply()
+    }
+
+    fun getIngestApiKey(context: Context): String {
+        return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .getString(PREF_API_KEY_INGEST, "") ?: ""
+    }
+
+    fun setIngestApiKey(context: Context, apiKey: String) {
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(PREF_API_KEY_INGEST, apiKey.trim())
             .apply()
     }
     
@@ -87,7 +100,7 @@ object BackendAPIClient {
             put("magnitude", magnitude)
         }
         
-        sendRequest("$apiBase/accelerometer", json)
+        sendRequest(context, "$apiBase/accelerometer", json)
     }
     
     /**
@@ -113,7 +126,7 @@ object BackendAPIClient {
             put("magnitude", magnitude)
         }
         
-        sendRequest("$apiBase/gyroscope", json)
+        sendRequest(context, "$apiBase/gyroscope", json)
     }
     
     /**
@@ -141,7 +154,7 @@ object BackendAPIClient {
             put("speed", speed)
         }
         
-        sendRequest("$apiBase/location", json)
+        sendRequest(context, "$apiBase/location", json)
     }
     
     /**
@@ -161,7 +174,7 @@ object BackendAPIClient {
             put("steps", steps)
         }
         
-        sendRequest("$apiBase/pedometer", json)
+        sendRequest(context, "$apiBase/pedometer", json)
     }
     
     /**
@@ -183,7 +196,7 @@ object BackendAPIClient {
             put("charging_status", chargingStatus)
         }
         
-        sendRequest("$apiBase/battery", json)
+        sendRequest(context, "$apiBase/battery", json)
     }
     
     /**
@@ -203,7 +216,7 @@ object BackendAPIClient {
             put("state", state)
         }
         
-        sendRequest("$apiBase/screen", json)
+        sendRequest(context, "$apiBase/screen", json)
     }
     
     /**
@@ -237,7 +250,7 @@ object BackendAPIClient {
             }
         }
         
-        sendRequest("$apiBase/notification", json)
+        sendRequest(context, "$apiBase/notification", json)
     }
     
     /**
@@ -251,7 +264,7 @@ object BackendAPIClient {
             put("timestamp", timestamp)
             put("bpm", bpm)
         }
-        sendRequest("$apiBase/wearable/heart-rate", json)
+        sendRequest(context, "$apiBase/wearable/heart-rate", json)
     }
 
     /**
@@ -266,7 +279,7 @@ object BackendAPIClient {
             put("end_time", endTime)
             put("count", count)
         }
-        sendRequest("$apiBase/wearable/steps", json)
+        sendRequest(context, "$apiBase/wearable/steps", json)
     }
 
     /**
@@ -282,7 +295,7 @@ object BackendAPIClient {
             put("title", title)
             put("notes", notes)
         }
-        sendRequest("$apiBase/wearable/sleep", json)
+        sendRequest(context, "$apiBase/wearable/sleep", json)
     }
 
     /**
@@ -297,7 +310,7 @@ object BackendAPIClient {
             put("systolic", systolic)
             put("diastolic", diastolic)
         }
-        sendRequest("$apiBase/wearable/blood-pressure", json)
+        sendRequest(context, "$apiBase/wearable/blood-pressure", json)
     }
 
     /**
@@ -311,7 +324,7 @@ object BackendAPIClient {
             put("timestamp", timestamp)
             put("weight_kg", weightKg)
         }
-        sendRequest("$apiBase/wearable/weight", json)
+        sendRequest(context, "$apiBase/wearable/weight", json)
     }
 
     /**
@@ -325,7 +338,7 @@ object BackendAPIClient {
             put("timestamp", timestamp)
             put("percentage", percentage)
         }
-        sendRequest("$apiBase/wearable/oxygen", json)
+        sendRequest(context, "$apiBase/wearable/oxygen", json)
     }
 
     /**
@@ -339,20 +352,31 @@ object BackendAPIClient {
             put("timestamp", timestamp)
             put("rate", rate)
         }
-        sendRequest("$apiBase/wearable/respiratory", json)
+        sendRequest(context, "$apiBase/wearable/respiratory", json)
     }
 
     /**
      * Internal method to send HTTP POST request asynchronously
      */
-    private fun sendRequest(url: String, json: JSONObject) {
+    private fun sendRequest(context: Context, url: String, json: JSONObject) {
+        val ingestKey = getIngestApiKey(context).trim()
+        if (ingestKey.isNotEmpty()) {
+            // Keep a body fallback for clients/proxies that strip custom headers.
+            json.put("api_key", ingestKey)
+        }
+
         val body = json.toString().toRequestBody(JSON_MEDIA_TYPE)
-        
-        val request = Request.Builder()
+
+        val requestBuilder = Request.Builder()
             .url(url)
             .post(body)
             .addHeader("Content-Type", "application/json")
-            .build()
+
+        if (ingestKey.isNotEmpty()) {
+            requestBuilder.addHeader("X-API-Key", ingestKey)
+        }
+
+        val request = requestBuilder.build()
         
         // Async call - doesn't block the sensor collection thread
         client.newCall(request).enqueue(object : Callback {

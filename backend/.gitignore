@@ -192,6 +192,9 @@ nbdist/
 #server config
 /aware-config.json
 /aware-config.json-backup
+/\.env
+/\.env.*
+!/.env.example
 
 #md files
 CHANGE_REPORT.md

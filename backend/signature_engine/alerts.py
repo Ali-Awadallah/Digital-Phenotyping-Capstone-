@@ -40,16 +40,54 @@ def insert_alert(conn, alert_row: dict):
     doc["hour_start_ts"] = int(hs.timestamp() * 1000)
     doc["created_at"] = datetime.utcnow()
     doc["status"] = doc.get("status", "new")
+    source_type = str(doc.get("source_type") or "").strip().lower()
+    if source_type not in {"phone", "watch", "both"}:
+        alert_code = str(doc.get("alert_code") or "").upper()
+        source_type = "watch" if alert_code.startswith("W") else "phone"
+    doc["source_type"] = source_type
+    device_id = doc.get("device_id")
+    if not device_id and doc.get("participant_id"):
+        preferred = _query_one(
+            conn,
+            """
+            SELECT device_id
+            FROM participant_devices
+            WHERE participant_id = %s
+              AND LOWER(COALESCE(device_type, 'unknown')) = %s
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1
+            """,
+            (doc["participant_id"], source_type),
+        )
+        if preferred and preferred.get("device_id"):
+            device_id = preferred["device_id"]
+        else:
+            fallback = _query_one(
+                conn,
+                """
+                SELECT device_id
+                FROM participant_devices
+                WHERE participant_id = %s
+                ORDER BY updated_at DESC, id DESC
+                LIMIT 1
+                """,
+                (doc["participant_id"],),
+            )
+            if fallback and fallback.get("device_id"):
+                device_id = fallback["device_id"]
+    doc["device_id"] = device_id
 
     _execute(
         conn,
         """
         INSERT INTO signature_alerts (
-            participant_id, hour_start, hour_start_iso, hour_start_ts, alert_code, alert_name,
+            participant_id, device_id, source_type, hour_start, hour_start_iso, hour_start_ts, alert_code, alert_name,
             severity, score, baseline_ref, top_features_json, explanation, created_at, status
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE
+            device_id = COALESCE(VALUES(device_id), device_id),
+            source_type = COALESCE(VALUES(source_type), source_type),
             hour_start_iso = VALUES(hour_start_iso),
             hour_start_ts = VALUES(hour_start_ts),
             alert_name = VALUES(alert_name),
@@ -62,7 +100,8 @@ def insert_alert(conn, alert_row: dict):
             status = VALUES(status)
         """,
         (
-            doc["participant_id"], doc["hour_start"], doc["hour_start_iso"], doc["hour_start_ts"],
+            doc["participant_id"], doc.get("device_id"), doc.get("source_type"),
+            doc["hour_start"], doc["hour_start_iso"], doc["hour_start_ts"],
             doc["alert_code"], doc.get("alert_name"), doc.get("severity"), doc.get("score"),
             doc.get("baseline_ref"), doc.get("top_features_json"), doc.get("explanation"),
             doc["created_at"], doc["status"],

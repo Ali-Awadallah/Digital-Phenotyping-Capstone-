@@ -3,11 +3,13 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const STORAGE_KEY = "@server_url";
+const INGEST_KEY_STORAGE = "@ingest_api_key";
 const DEFAULT_URL = "http://192.168.10.8:8080/api";
 
 // ---- Dynamic API Base URL ----
 
 let _cachedBase = null; // in-memory cache so we don't hit AsyncStorage on every call
+let _cachedIngestKey = null;
 
 /**
  * Get the current API base URL (reads from cache or AsyncStorage).
@@ -21,6 +23,17 @@ export async function getApiBase() {
     _cachedBase = DEFAULT_URL;
   }
   return _cachedBase;
+}
+
+export async function getApiIngestKey() {
+  if (_cachedIngestKey !== null) return _cachedIngestKey;
+  try {
+    const saved = await AsyncStorage.getItem(INGEST_KEY_STORAGE);
+    _cachedIngestKey = saved || "";
+  } catch {
+    _cachedIngestKey = "";
+  }
+  return _cachedIngestKey;
 }
 
 /**
@@ -40,6 +53,36 @@ export async function setApiBase(url) {
   } catch (e) {
     console.warn("Failed to sync API base to native layer:", e);
   }
+}
+
+export async function setApiIngestKey(key) {
+  const normalized = (key || "").trim();
+  await AsyncStorage.setItem(INGEST_KEY_STORAGE, normalized);
+  _cachedIngestKey = normalized;
+
+  // Sync to native Android sender used by background service.
+  try {
+    const { NativeModules, Platform } = require("react-native");
+    if (Platform.OS === "android" && NativeModules.BackgroundService) {
+      await NativeModules.BackgroundService.setAPIIngestKey(normalized);
+    }
+  } catch (e) {
+    console.warn("Failed to sync ingest key to native layer:", e);
+  }
+}
+
+async function buildAuthHeaders() {
+  const ingestKey = await getApiIngestKey();
+  const headers = { "Content-Type": "application/json" };
+  if (ingestKey) headers["X-API-Key"] = ingestKey;
+  return { headers, ingestKey };
+}
+
+async function addApiKeyToUrl(url) {
+  const ingestKey = await getApiIngestKey();
+  if (!ingestKey) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}api_key=${encodeURIComponent(ingestKey)}`;
 }
 
 /**
@@ -78,10 +121,12 @@ export async function sendEvent(device_id, value) {
     ts: Date.now(),
     value,
   };
+  const { headers, ingestKey } = await buildAuthHeaders();
+  if (ingestKey) body.api_key = ingestKey;
 
   const res = await fetch(`${API_BASE}/events`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(body),
   });
 
@@ -91,54 +136,65 @@ export async function sendEvent(device_id, value) {
 export async function getEvents(device_id) {
   const API_BASE = await getApiBase();
   const now = Date.now();
-  const res = await fetch(
-    `${API_BASE}/events?device_id=${device_id}&start=0&end=${now}`
+  const { headers } = await buildAuthHeaders();
+  const url = await addApiKeyToUrl(
+    `${API_BASE}/events?device_id=${encodeURIComponent(device_id)}&start=0&end=${now}`
   );
+  const res = await fetch(url, { headers });
   return res.json(); // returns an array of events
 }
 
 export async function sendBatteryReading(deviceId, percentage, chargingStatus = "unknown") {
   const API_BASE = await getApiBase();
+  const { headers, ingestKey } = await buildAuthHeaders();
+  const payload = {
+    device_id: deviceId,
+    percentage,
+    charging_status: chargingStatus, // "charging", "unplugged", "full", or "unknown"
+    ts: Date.now(),
+  };
+  if (ingestKey) payload.api_key = ingestKey;
   const res = await fetch(`${API_BASE}/battery`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      device_id: deviceId,
-      percentage,
-      charging_status: chargingStatus, // "charging", "unplugged", "full", or "unknown"
-      ts: Date.now(),
-    }),
+    headers,
+    body: JSON.stringify(payload),
   });
   return res.json();
 }
 
 export async function sendNotification(deviceId, appName, title, content, category, timestamp) {
   const API_BASE = await getApiBase();
+  const { headers, ingestKey } = await buildAuthHeaders();
+  const payload = {
+    device_id: deviceId,
+    app_name: appName,
+    title: title,
+    content: content,
+    category: category,
+    ts: timestamp || Date.now(),
+  };
+  if (ingestKey) payload.api_key = ingestKey;
   const res = await fetch(`${API_BASE}/notification`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      device_id: deviceId,
-      app_name: appName,
-      title: title,
-      content: content,
-      category: category,
-      ts: timestamp || Date.now(),
-    }),
+    headers,
+    body: JSON.stringify(payload),
   });
   return res.json();
 }
 
 export async function sendScreenState(deviceId, state) {
   const API_BASE = await getApiBase();
+  const { headers, ingestKey } = await buildAuthHeaders();
+  const payload = {
+    device_id: deviceId,
+    state, // "ON" or "OFF"
+    ts: Date.now(),
+  };
+  if (ingestKey) payload.api_key = ingestKey;
   const res = await fetch(`${API_BASE}/screen`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      device_id: deviceId,
-      state, // "ON" or "OFF"
-      ts: Date.now(),
-    }),
+    headers,
+    body: JSON.stringify(payload),
   });
   return res.json();
 }
@@ -146,11 +202,13 @@ export async function sendScreenState(deviceId, state) {
 export async function sendGyroscope(device_id, { ts, x, y, z, magnitude }) {
   const API_BASE = await getApiBase();
   const body = { device_id, ts, x, y, z, magnitude };
+  const { headers, ingestKey } = await buildAuthHeaders();
+  if (ingestKey) body.api_key = ingestKey;
   //console.log("Sending gyro:", body);
 
   const res = await fetch(`${API_BASE}/gyroscope`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(body),
   });
 
@@ -160,11 +218,13 @@ export async function sendGyroscope(device_id, { ts, x, y, z, magnitude }) {
 export async function sendAccelerometer(device_id, { ts, x, y, z, magnitude }) {
   const API_BASE = await getApiBase();
   const body = { device_id, ts, x, y, z, magnitude };
+  const { headers, ingestKey } = await buildAuthHeaders();
+  if (ingestKey) body.api_key = ingestKey;
   //console.log("Sending accel:", body);
 
   const res = await fetch(`${API_BASE}/accelerometer`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(body),
   });
 
@@ -174,11 +234,13 @@ export async function sendAccelerometer(device_id, { ts, x, y, z, magnitude }) {
 export async function sendPedometer(device_id, { ts, steps }) {
   const API_BASE = await getApiBase();
   const body = { device_id, ts, steps };
+  const { headers, ingestKey } = await buildAuthHeaders();
+  if (ingestKey) body.api_key = ingestKey;
   console.log("Sending pedometer:", body);
 
   const res = await fetch(`${API_BASE}/pedometer`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(body),
   });
 
@@ -188,11 +250,13 @@ export async function sendPedometer(device_id, { ts, steps }) {
 export async function sendLocation(device_id, { ts, latitude, longitude, accuracy, altitude, speed }) {
   const API_BASE = await getApiBase();
   const body = { device_id, ts, latitude, longitude, accuracy, altitude, speed };
+  const { headers, ingestKey } = await buildAuthHeaders();
+  if (ingestKey) body.api_key = ingestKey;
   //console.log("Sending location:", body);
 
   const res = await fetch(`${API_BASE}/location`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(body),
   });
 
@@ -206,7 +270,9 @@ export async function sendLocation(device_id, { ts, latitude, longitude, accurac
 export async function getParticipant(deviceId) {
   const API_BASE = await getApiBase();
   try {
-    const res = await fetch(`${API_BASE}/participants/${encodeURIComponent(deviceId)}`);
+    const { headers } = await buildAuthHeaders();
+    const url = await addApiKeyToUrl(`${API_BASE}/participants/${encodeURIComponent(deviceId)}`);
+    const res = await fetch(url, { headers });
     if (res.status === 404) return null;
     if (!res.ok) return null;
     return await res.json();

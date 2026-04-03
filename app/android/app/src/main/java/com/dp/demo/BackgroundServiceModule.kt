@@ -252,4 +252,30 @@ class BackgroundServiceModule(private val reactContext: ReactApplicationContext)
             promise.reject("E_SET_API_URL", "Failed to set API base URL: ${e.message}", e)
         }
     }
+
+    /**
+     * Set ingest API key used for sensor POST calls.
+     */
+    @ReactMethod
+    fun setAPIIngestKey(apiKey: String, promise: Promise) {
+        try {
+            BackendAPIClient.setIngestApiKey(reactContext, apiKey)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("E_SET_API_KEY", "Failed to set ingest API key: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Get ingest API key currently stored on device.
+     */
+    @ReactMethod
+    fun getAPIIngestKey(promise: Promise) {
+        try {
+            val key = BackendAPIClient.getIngestApiKey(reactContext)
+            promise.resolve(key)
+        } catch (e: Exception) {
+            promise.reject("E_GET_API_KEY", "Failed to get ingest API key: ${e.message}", e)
+        }
+    }
 }

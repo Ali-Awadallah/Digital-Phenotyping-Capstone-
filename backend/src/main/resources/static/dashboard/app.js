@@ -15,13 +15,322 @@
         alerts: [],
         participants: [],
         socket: null,
-        participantMaps: {}
+        participantMaps: {},
+        alertGroupExpanded: {}
     };
 
     // API Configuration
     const API_BASE = '/api';
+    const ADMIN_API_KEY_STORAGE = 'dp_ids_admin_api_key';
+    const AUTH_TOKEN_STORAGE = 'dp_ids_auth_token';
+    const AUTH_ROLE_STORAGE = 'dp_ids_role';
+    const ALERT_FILTER_STATE_STORAGE = 'dp_ids_alert_filter_state';
+    const ALERT_PRESET_STORAGE = 'dp_ids_alert_filter_preset';
     const DASHBOARD_REFRESH_MS = 30000;
     const ALERTS_LIVE_REFRESH_MS = 5000;
+    const ADMIN_ONLY_VIEWS = new Set(['users', 'settings']);
+    const OPERATIONAL_VIEWS = new Set(['participants', 'alerts', 'devices', 'dashboard']);
+
+    function getCurrentRole() {
+        return (sessionStorage.getItem(AUTH_ROLE_STORAGE) || 'viewer').toLowerCase();
+    }
+
+    function isAdminRole() {
+        return getCurrentRole() === 'admin';
+    }
+
+    function isDoctorRole() {
+        return getCurrentRole() === 'doctor';
+    }
+
+    function canReadAdminData() {
+        const role = getCurrentRole();
+        return role === 'admin' || role === 'analyst' || role === 'viewer' || role === 'doctor';
+    }
+
+    function canReadParticipantsData() {
+        return isDoctorRole() || canReadAdminData();
+    }
+
+    function canWriteAdminData() {
+        const role = getCurrentRole();
+        return role === 'admin' || role === 'analyst';
+    }
+
+    function canAccessView(viewName) {
+        if (ADMIN_ONLY_VIEWS.has(viewName)) {
+            return isAdminRole();
+        }
+        if (OPERATIONAL_VIEWS.has(viewName)) {
+            return canReadAdminData();
+        }
+        return true;
+    }
+
+    function setElementVisible(elementId, visible) {
+        const el = document.getElementById(elementId);
+        if (!el) return;
+        el.style.display = visible ? '' : 'none';
+    }
+
+    function setViewRoleHint(viewName, message) {
+        const view = document.getElementById(`view-${viewName}`);
+        if (!view) return;
+        const header = view.querySelector('.view-header');
+        if (!header) return;
+
+        let hint = header.querySelector('.role-hint');
+        if (!message) {
+            if (hint) hint.remove();
+            return;
+        }
+        if (!hint) {
+            hint = document.createElement('div');
+            hint.className = 'role-hint';
+            header.appendChild(hint);
+        }
+        hint.textContent = message;
+    }
+
+    function applyRolePermissions() {
+        const role = getCurrentRole();
+        const adminOnly = role === 'admin';
+        const canWrite = canWriteAdminData();
+        const canRead = canReadAdminData();
+        const canReadParticipants = canReadParticipantsData();
+        const dashboardNav = document.querySelector('.nav-item[data-view="dashboard"]');
+        if (dashboardNav) {
+            dashboardNav.style.display = canRead ? '' : 'none';
+        }
+
+        const usersNav = document.querySelector('.nav-item[data-view="users"]');
+        if (usersNav) {
+            usersNav.style.display = adminOnly ? '' : 'none';
+        }
+        const settingsNav = document.querySelector('.nav-item[data-view="settings"]');
+        if (settingsNav) {
+            settingsNav.style.display = adminOnly ? '' : 'none';
+        }
+
+        const participantsNav = document.querySelector('.nav-item[data-view="participants"]');
+        if (participantsNav) participantsNav.style.display = canReadParticipants ? '' : 'none';
+        const alertsNav = document.querySelector('.nav-item[data-view="alerts"]');
+        if (alertsNav) alertsNav.style.display = canRead ? '' : 'none';
+        const devicesNav = document.querySelector('.nav-item[data-view="devices"]');
+        if (devicesNav) devicesNav.style.display = canRead ? '' : 'none';
+
+        setElementVisible('add-user-btn', adminOnly);
+        setElementVisible('refresh-admin-security-btn', adminOnly);
+        setElementVisible('add-participant-btn', canWrite);
+
+        setViewRoleHint('participants', canWrite ? '' : 'Read-only mode: participants can be viewed but not edited.');
+        setViewRoleHint('alerts', canWrite ? '' : 'Read-only mode: alert acknowledgment is disabled.');
+    }
+
+    function getAlertFilterElements() {
+        return {
+            status: document.getElementById('alert-filter'),
+            source: document.getElementById('alert-source-filter'),
+            participant: document.getElementById('alert-participant-filter'),
+            limit: document.getElementById('alert-limit-filter')
+        };
+    }
+
+    function getCurrentAlertFilterState() {
+        const filters = getAlertFilterElements();
+        return {
+            status: filters.status ? filters.status.value : 'all',
+            source: filters.source ? filters.source.value : 'all',
+            participant: filters.participant ? filters.participant.value : 'all',
+            limit: filters.limit ? filters.limit.value : '10000'
+        };
+    }
+
+    function applyAlertFilterState(filterState) {
+        if (!filterState || typeof filterState !== 'object') return;
+        const filters = getAlertFilterElements();
+        if (filters.status && filterState.status) filters.status.value = filterState.status;
+        if (filters.source && filterState.source) filters.source.value = filterState.source;
+        if (filters.participant && filterState.participant) filters.participant.value = filterState.participant;
+        if (filters.limit && filterState.limit) filters.limit.value = filterState.limit;
+    }
+
+    function persistAlertFilterState(filterState, preset = 'custom') {
+        try {
+            localStorage.setItem(ALERT_FILTER_STATE_STORAGE, JSON.stringify(filterState || getCurrentAlertFilterState()));
+            localStorage.setItem(ALERT_PRESET_STORAGE, preset);
+        } catch (e) {
+            console.warn('Failed to persist alert filters:', e);
+        }
+    }
+
+    function restoreAlertFilterState() {
+        try {
+            const raw = localStorage.getItem(ALERT_FILTER_STATE_STORAGE);
+            if (!raw) return;
+            const parsed = JSON.parse(raw);
+            applyAlertFilterState(parsed);
+        } catch (e) {
+            console.warn('Failed to restore alert filters:', e);
+        }
+    }
+
+    function getCurrentPresetId() {
+        return localStorage.getItem(ALERT_PRESET_STORAGE) || 'custom';
+    }
+
+    function refreshAlertPresetButtons(activePreset = getCurrentPresetId()) {
+        document.querySelectorAll('.alert-preset-btn').forEach(btn => {
+            const presetId = btn.getAttribute('data-preset');
+            btn.classList.toggle('active', presetId === activePreset);
+        });
+    }
+
+    function applyAlertPreset(presetId) {
+        const presets = {
+            all: { status: 'all', source: 'all', participant: 'all', limit: '10000' },
+            phone_active: { status: 'active', source: 'phone', participant: 'all', limit: '200' },
+            watch_active: { status: 'active', source: 'watch', participant: 'all', limit: '200' },
+            acknowledged: { status: 'acknowledged', source: 'all', participant: 'all', limit: '1000' }
+        };
+        const preset = presets[presetId];
+        if (!preset) return;
+
+        applyAlertFilterState(preset);
+        persistAlertFilterState(getCurrentAlertFilterState(), presetId);
+        refreshAlertPresetButtons(presetId);
+        loadAlertsList();
+    }
+
+    function participantGroupDomId(participantId) {
+        return encodeURIComponent(String(participantId)).replace(/%/g, '_');
+    }
+
+    function alertTimestampValue(alert) {
+        return alert?.triggered_at || alert?.created_at || alert?.hour_start || 0;
+    }
+
+    function buildAlertDensitySparkline(alerts, bucketCount = 10) {
+        const normalizedBuckets = Array(Math.max(4, bucketCount)).fill(0);
+        if (!Array.isArray(alerts) || alerts.length === 0) {
+            return {
+                barsHtml: normalizedBuckets.map(() => '<span class="spark-bar empty"></span>').join(''),
+                total: 0
+            };
+        }
+
+        const end = new Date();
+        end.setHours(0, 0, 0, 0);
+
+        alerts.forEach(alert => {
+            const ts = alertTimestampValue(alert);
+            const d = new Date(ts);
+            if (isNaN(d.getTime())) return;
+            d.setHours(0, 0, 0, 0);
+            const deltaDays = Math.floor((end.getTime() - d.getTime()) / 86400000);
+            if (deltaDays >= 0 && deltaDays < normalizedBuckets.length) {
+                const bucketIndex = normalizedBuckets.length - 1 - deltaDays;
+                normalizedBuckets[bucketIndex] += 1;
+            }
+        });
+
+        const max = Math.max(...normalizedBuckets, 1);
+        const barsHtml = normalizedBuckets.map((count, index) => {
+            const pct = count === 0 ? 12 : Math.max(24, Math.round((count / max) * 100));
+            const cls = count === 0 ? 'spark-bar empty' : 'spark-bar';
+            return `<span class="${cls}" style="height:${pct}%;" title="Window ${index + 1}: ${count} alert(s)"></span>`;
+        }).join('');
+
+        return {
+            barsHtml,
+            total: normalizedBuckets.reduce((a, b) => a + b, 0)
+        };
+    }
+
+    function humanizeFeatureName(name) {
+        return String(name || '')
+            .replace(/_/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .replace(/\b\w/g, c => c.toUpperCase());
+    }
+
+    function formatFeatureValue(value) {
+        if (value === null || value === undefined) return '--';
+        if (typeof value === 'number') {
+            if (!Number.isFinite(value)) return '--';
+            if (Math.abs(value) >= 1000) return value.toFixed(0);
+            if (Math.abs(value) >= 100) return value.toFixed(1);
+            if (Math.abs(value) >= 10) return value.toFixed(2);
+            return value.toFixed(3);
+        }
+        return String(value);
+    }
+
+    function buildBaselineDiffHtml(alert) {
+        if (!alert || alert.alert_type !== 'signature') return '';
+        const features = safeJsonParse(alert.top_features_json);
+        if (!features || typeof features !== 'object' || Array.isArray(features)) return '';
+
+        const zEntries = Object.entries(features)
+            .filter(([k, v]) => /(?:_z|_zscore)$/i.test(k) && typeof v === 'number' && Number.isFinite(v));
+
+        const rows = [];
+        zEntries.forEach(([zKey, zVal]) => {
+            const metricRoot = zKey.replace(/(?:_z|_zscore)$/i, '');
+            const currentKey = Object.keys(features).find(k => {
+                if (/(?:_z|_zscore)$/i.test(k)) return false;
+                return k === metricRoot || k.startsWith(`${metricRoot}_`);
+            });
+            const currentVal = currentKey ? features[currentKey] : null;
+            rows.push({
+                metric: humanizeFeatureName(currentKey || metricRoot),
+                current: formatFeatureValue(currentVal),
+                z: zVal
+            });
+        });
+
+        rows.sort((a, b) => Math.abs(b.z) - Math.abs(a.z));
+        const topRows = rows.slice(0, 4);
+        if (topRows.length === 0) return '';
+
+        const rowHtml = topRows.map(row => {
+            const direction = row.z >= 0 ? 'up' : 'down';
+            const zText = `${row.z >= 0 ? '+' : ''}${row.z.toFixed(2)}z`;
+            return `
+                <div class="baseline-diff-row">
+                    <span class="baseline-diff-metric">${row.metric}</span>
+                    <span class="baseline-diff-value">${row.current}</span>
+                    <span class="baseline-diff-delta ${direction}">${zText}</span>
+                </div>
+            `;
+        }).join('');
+
+        return `
+            <div class="alert-baseline-diff">
+                <div class="alert-baseline-head">Baseline Snapshot: ${alert.baseline_ref || 'personal baseline'}</div>
+                <div class="alert-baseline-rows">${rowHtml}</div>
+            </div>
+        `;
+    }
+
+    function normalizeSeverity(alert, acknowledged) {
+        if (acknowledged) return 'ack';
+        if (alert.alert_type === 'geofence') return 'high';
+
+        const raw = String(alert.severity || '').trim().toLowerCase();
+        if (raw === 'critical' || raw === 'high') return 'high';
+        if (raw === 'medium' || raw === 'moderate') return 'medium';
+        if (raw === 'low' || raw === 'info') return 'low';
+
+        const score = Number(alert.score);
+        if (Number.isFinite(score)) {
+            if (score >= 5) return 'high';
+            if (score >= 2) return 'medium';
+            return 'low';
+        }
+        return 'medium';
+    }
 
     // DOM Elements
     const elements = {
@@ -36,6 +345,7 @@
 
     // Initialize Application
     function init() {
+        loadAdminApiKeyFromUrl();
         bindEvents();
         checkAuthState();
     }
@@ -60,23 +370,46 @@
         // Alert filter
         const alertFilter = document.getElementById('alert-filter');
         if (alertFilter) {
-            alertFilter.addEventListener('change', () => loadAlertsList());
+            alertFilter.addEventListener('change', () => {
+                persistAlertFilterState(getCurrentAlertFilterState(), 'custom');
+                refreshAlertPresetButtons('custom');
+                loadAlertsList();
+            });
         }
 
         const alertSourceFilter = document.getElementById('alert-source-filter');
         if (alertSourceFilter) {
-            alertSourceFilter.addEventListener('change', () => loadAlertsList());
+            alertSourceFilter.addEventListener('change', () => {
+                persistAlertFilterState(getCurrentAlertFilterState(), 'custom');
+                refreshAlertPresetButtons('custom');
+                loadAlertsList();
+            });
         }
 
         const alertParticipantFilter = document.getElementById('alert-participant-filter');
         if (alertParticipantFilter) {
-            alertParticipantFilter.addEventListener('change', () => loadAlertsList());
+            alertParticipantFilter.addEventListener('change', () => {
+                persistAlertFilterState(getCurrentAlertFilterState(), 'custom');
+                refreshAlertPresetButtons('custom');
+                loadAlertsList();
+            });
         }
 
         const alertLimitFilter = document.getElementById('alert-limit-filter');
         if (alertLimitFilter) {
-            alertLimitFilter.addEventListener('change', () => loadAlertsList());
+            alertLimitFilter.addEventListener('change', () => {
+                persistAlertFilterState(getCurrentAlertFilterState(), 'custom');
+                refreshAlertPresetButtons('custom');
+                loadAlertsList();
+            });
         }
+
+        document.querySelectorAll('.alert-preset-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const presetId = btn.getAttribute('data-preset');
+                if (presetId) applyAlertPreset(presetId);
+            });
+        });
 
         // Refresh buttons
         const refreshMapBtn = document.getElementById('refresh-map-btn');
@@ -88,36 +421,122 @@
         if (refreshAlertsBtn) {
             refreshAlertsBtn.addEventListener('click', loadAlertsList);
         }
-    }
 
-    // Check Authentication State
-    function checkAuthState() {
-        const isAuth = sessionStorage.getItem('dp_ids_auth');
-        if (isAuth === 'true') {
-            showDashboard();
-        } else {
-            showLogin();
+        const refreshAdminSecurityBtn = document.getElementById('refresh-admin-security-btn');
+        if (refreshAdminSecurityBtn) {
+            refreshAdminSecurityBtn.addEventListener('click', loadAdminControlPanel);
+        }
+
+        const addUserBtn = document.getElementById('add-user-btn');
+        if (addUserBtn) {
+            addUserBtn.addEventListener('click', handleAddUser);
         }
     }
 
-    // Handle Login
-    function handleLogin(e) {
-        e.preventDefault();
-        const username = document.getElementById('username').value;
-        const password = document.getElementById('password').value;
+    async function syncAuthProfileFromToken() {
+        const token = (sessionStorage.getItem(AUTH_TOKEN_STORAGE) || '').trim();
+        if (!token) return false;
 
-        // Demo authentication - accept any non-empty credentials
-        if (username && password) {
+        try {
+            const response = await fetch(`${API_BASE}/auth/me`, {
+                method: 'GET',
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (!response.ok) return false;
+
+            const payload = await response.json();
+            const user = payload?.user || {};
+            const username = (user.username || sessionStorage.getItem('dp_ids_user') || '').trim();
+            const role = (user.role || sessionStorage.getItem(AUTH_ROLE_STORAGE) || 'viewer').toLowerCase();
+
+            if (username) sessionStorage.setItem('dp_ids_user', username);
+            sessionStorage.setItem(AUTH_ROLE_STORAGE, role);
+            return true;
+        } catch (error) {
+            console.warn('Failed to sync auth profile:', error);
+            return false;
+        }
+    }
+
+    // Check Authentication State
+    async function checkAuthState() {
+        const token = (sessionStorage.getItem(AUTH_TOKEN_STORAGE) || '').trim();
+        if (!token) {
+            showLogin();
+            return;
+        }
+
+        const profileOk = await syncAuthProfileFromToken();
+        if (!profileOk) {
+            sessionStorage.removeItem('dp_ids_auth');
+            sessionStorage.removeItem('dp_ids_user');
+            sessionStorage.removeItem(AUTH_TOKEN_STORAGE);
+            sessionStorage.removeItem(AUTH_ROLE_STORAGE);
+            showLogin();
+            return;
+        }
+
+        showDashboard();
+    }
+
+    // Handle Login
+    async function handleLogin(e) {
+        e.preventDefault();
+        const username = (document.getElementById('username').value || '').trim();
+        const password = document.getElementById('password').value || '';
+        if (!username || !password) {
+            alert('Username and password are required.');
+            return;
+        }
+
+        try {
+            const response = await fetch(`${API_BASE}/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+
+            if (!response.ok) {
+                alert('Invalid username or password.');
+                return;
+            }
+
+            const payload = await response.json();
+            const token = (payload.token || '').trim();
+            if (!token) {
+                alert('Login failed: missing session token.');
+                return;
+            }
+
             sessionStorage.setItem('dp_ids_auth', 'true');
-            sessionStorage.setItem('dp_ids_user', username);
+            sessionStorage.setItem('dp_ids_user', payload.username || username);
+            sessionStorage.setItem(AUTH_TOKEN_STORAGE, token);
+            sessionStorage.setItem(AUTH_ROLE_STORAGE, (payload.role || 'viewer').toLowerCase());
             showDashboard();
+        } catch (error) {
+            console.error('Login failed:', error);
+            alert('Login failed. Please try again.');
         }
     }
 
     // Handle Logout
-    function handleLogout() {
+    async function handleLogout() {
+        const token = (sessionStorage.getItem(AUTH_TOKEN_STORAGE) || '').trim();
+        if (token) {
+            try {
+                await fetch(`${API_BASE}/auth/logout`, {
+                    method: 'POST',
+                    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: '{}'
+                });
+            } catch (e) {
+                console.warn('Logout request failed:', e);
+            }
+        }
         sessionStorage.removeItem('dp_ids_auth');
         sessionStorage.removeItem('dp_ids_user');
+        sessionStorage.removeItem(AUTH_TOKEN_STORAGE);
+        sessionStorage.removeItem(AUTH_ROLE_STORAGE);
         if (state.refreshInterval) {
             clearInterval(state.refreshInterval);
             state.refreshInterval = null;
@@ -148,7 +567,12 @@
 
         // Update current user display
         const username = sessionStorage.getItem('dp_ids_user') || 'Admin';
-        document.querySelector('.current-user').textContent = username;
+        const roleLower = getCurrentRole();
+        const role = roleLower.toUpperCase();
+        document.querySelector('.current-user').textContent = `${username} (${role})`;
+        applyRolePermissions();
+        restoreAlertFilterState();
+        refreshAlertPresetButtons();
 
         // Load initial data
         loadDashboardData();
@@ -171,6 +595,10 @@
 
     // Navigate to View
     function navigateTo(viewName) {
+        if (!canAccessView(viewName)) {
+            viewName = canReadAdminData() ? 'dashboard' : 'participants';
+        }
+
         state.currentView = viewName;
 
         // Update navigation active state
@@ -214,9 +642,72 @@
 
     // ---- API FUNCTIONS ----
 
+    function loadAdminApiKeyFromUrl() {
+        try {
+            const params = new URLSearchParams(window.location.search);
+            const key = (params.get('admin_api_key') || params.get('api_key') || '').trim();
+            if (key) {
+                localStorage.setItem(ADMIN_API_KEY_STORAGE, key);
+            }
+        } catch (e) {
+            console.warn('Failed to read API key from URL:', e);
+        }
+    }
+
+    function getAdminApiKey() {
+        return (localStorage.getItem(ADMIN_API_KEY_STORAGE) || '').trim();
+    }
+
+    function setAdminApiKey(value) {
+        if (!value || !value.trim()) return;
+        localStorage.setItem(ADMIN_API_KEY_STORAGE, value.trim());
+    }
+
+    function ensureAdminApiKey(forcePrompt = false) {
+        const existing = getAdminApiKey();
+        if (existing && !forcePrompt) return existing;
+        const entered = window.prompt('Enter Admin API key', existing || '');
+        if (!entered || !entered.trim()) return null;
+        setAdminApiKey(entered);
+        return entered.trim();
+    }
+
+    async function apiRequest(endpoint, options = {}, retryAuth = true) {
+        const headers = { ...(options.headers || {}) };
+        const token = (sessionStorage.getItem(AUTH_TOKEN_STORAGE) || '').trim();
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        } else {
+            const apiKey = getAdminApiKey();
+            if (apiKey) headers['X-API-Key'] = apiKey;
+        }
+
+        let response = await fetch(`${API_BASE}${endpoint}`, {
+            ...options,
+            headers
+        });
+
+        if (response.status === 401 && retryAuth) {
+            if (token) {
+                await handleLogout();
+                return response;
+            } else {
+                const newKey = ensureAdminApiKey(true);
+                if (newKey) {
+                    headers['X-API-Key'] = newKey;
+                    response = await fetch(`${API_BASE}${endpoint}`, {
+                        ...options,
+                        headers
+                    });
+                }
+            }
+        }
+        return response;
+    }
+
     async function apiGet(endpoint) {
         try {
-            const response = await fetch(`${API_BASE}${endpoint}`);
+            const response = await apiRequest(endpoint);
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             return await response.json();
         } catch (error) {
@@ -227,7 +718,7 @@
 
     async function apiPost(endpoint, data) {
         try {
-            const response = await fetch(`${API_BASE}${endpoint}`, {
+            const response = await apiRequest(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(data)
@@ -236,6 +727,18 @@
             return await response.json();
         } catch (error) {
             console.error(`API POST ${endpoint} failed:`, error);
+            return null;
+        }
+    }
+
+    async function apiDelete(endpoint) {
+        try {
+            const response = await apiRequest(endpoint, { method: 'DELETE' });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const text = await response.text();
+            return text ? JSON.parse(text) : { ok: true };
+        } catch (error) {
+            console.error(`API DELETE ${endpoint} failed:`, error);
             return null;
         }
     }
@@ -261,7 +764,7 @@
 
         const merged = [
             ...(geofenceAlerts || []).map(a => ({ ...a, alert_type: 'geofence', source_type: 'phone' })),
-            ...(signatureAlerts || []).map(a => ({ ...a, alert_type: 'signature', source_type: getAlertSource(a) }))
+            ...(signatureAlerts || []).map(a => ({ ...a, alert_type: 'signature', source_type: (a.source_type || getAlertSource(a)) }))
         ];
 
         const sortTs = (a) => a.triggered_at || a.created_at || a.hour_start || 0;
@@ -270,7 +773,15 @@
 
         // Update stats
         document.getElementById('stat-participants').textContent = state.participants.length;
-        document.getElementById('stat-devices').textContent = state.participants.length;
+        const totalDevices = (state.participants || []).reduce((acc, participant) => {
+            const explicitCount = Number(participant.device_count);
+            if (Number.isFinite(explicitCount) && explicitCount > 0) return acc + explicitCount;
+            if (Array.isArray(participant.devices) && participant.devices.length > 0) return acc + participant.devices.length;
+            const fallbackCount = [participant.phone_device_id, participant.watch_device_id, participant.device_id]
+                .filter(Boolean).length;
+            return acc + (fallbackCount > 0 ? fallbackCount : 0);
+        }, 0);
+        document.getElementById('stat-devices').textContent = totalDevices;
         document.getElementById('stat-alerts').textContent = state.alerts.length;
 
         // Update alert badge in sidebar
@@ -302,6 +813,9 @@
                 break;
             case 'users':
                 loadUsersTable();
+                break;
+            case 'settings':
+                loadAdminControlPanel();
                 break;
         }
     }
@@ -353,6 +867,7 @@
     async function loadParticipantsTable() {
         const tbody = document.getElementById('participants-table');
         if (!tbody) return;
+        const writeAllowed = canWriteAdminData();
 
         const participants = await apiGet('/participants');
         state.participants = participants || [];
@@ -362,32 +877,51 @@
             return;
         }
 
-        tbody.innerHTML = state.participants.map(p => `
-            <tr id="row-${p.participant_id}">
-                <td>${p.participant_id.substring(0, 8)}...</td>
-                <td>${p.name}</td>
-                <td><code>${p.device_id}</code></td>
-                <td><span class="status-badge status-${p.status}">${p.status}</span></td>
-                <td><span class="risk-badge risk-${p.risk_level}">${p.risk_level}</span></td>
-                <td>
-                    <button class="btn btn-sm btn-info" id="loc-btn-${p.participant_id}" onclick="toggleLocationMap('${p.participant_id}', '${p.device_id}', '${p.name}')"><i style="margin-right: 5px;" class="fas fa-map-marker-alt"></i> Location</button>
-                    <button class="btn btn-sm btn-secondary" onclick="openParticipantModal('${p.participant_id}')"><i style="margin-right: 5px;" class="fas fa-cog"></i> Settings</button>
-                    <button class="btn btn-sm btn-primary" onclick="openZonesModal('${p.participant_id}')"><i style="margin-right: 5px;" class="fas fa-map-marked-alt"></i> Red Zones</button>
-                </td>
-            </tr>
-            <tr id="map-row-${p.participant_id}" class="map-row hidden">
-                <td colspan="7">
-                    <div class="participant-map-container">
-                        <div class="map-header">
-                            <span>Live Location: ${p.name}</span>
-                            <button class="btn btn-sm btn-secondary" onclick="refreshParticipantMap('${p.participant_id}', '${p.device_id}')"><i style="margin-right: 5px;" class="fas fa-sync-alt"></i> Refresh</button>
+        tbody.innerHTML = state.participants.map(p => {
+            const phoneDeviceId = p.phone_device_id || '';
+            const watchDeviceId = p.watch_device_id || '';
+            const fallbackDeviceId = (!watchDeviceId && p.device_id) ? p.device_id : '';
+            const primaryDeviceId = phoneDeviceId || fallbackDeviceId;
+            const hasLocationDevice = !!primaryDeviceId;
+            const sourceLabel = p.source_type === 'both'
+                ? 'Phone + Watch'
+                : (p.source_type === 'watch' ? 'Watch' : (p.source_type === 'phone' ? 'Phone' : 'Unknown'));
+            const sourceBadgeClass = p.source_type === 'both'
+                ? 'both'
+                : (p.source_type === 'watch' ? 'watch' : 'phone');
+            const deviceCell = `
+                <div><span class="alert-source-badge ${sourceBadgeClass}">${sourceLabel}</span></div>
+                <div><small>Phone: <code>${phoneDeviceId || '--'}</code></small></div>
+                <div><small>Watch: <code>${watchDeviceId || '--'}</code></small></div>
+            `;
+
+            return `
+                <tr id="row-${p.participant_id}">
+                    <td>${p.participant_id.substring(0, 8)}...</td>
+                    <td>${p.name}</td>
+                    <td>${deviceCell}</td>
+                    <td><span class="status-badge status-${p.status}">${p.status}</span></td>
+                    <td><span class="risk-badge risk-${p.risk_level}">${p.risk_level}</span></td>
+                    <td>
+                        <button class="btn btn-sm btn-info" id="loc-btn-${p.participant_id}" ${hasLocationDevice ? '' : 'disabled'} onclick="toggleLocationMap('${p.participant_id}', '${primaryDeviceId}', '${p.name}')"><i style="margin-right: 5px;" class="fas fa-map-marker-alt"></i> Location</button>
+                        <button class="btn btn-sm btn-secondary" onclick="openParticipantModal('${p.participant_id}')"><i style="margin-right: 5px;" class="fas fa-cog"></i> ${writeAllowed ? 'Settings' : 'View'}</button>
+                        <button class="btn btn-sm btn-primary" onclick="openZonesModal('${p.participant_id}')"><i style="margin-right: 5px;" class="fas fa-map-marked-alt"></i> ${writeAllowed ? 'Red Zones' : 'View Zones'}</button>
+                    </td>
+                </tr>
+                <tr id="map-row-${p.participant_id}" class="map-row hidden">
+                    <td colspan="7">
+                        <div class="participant-map-container">
+                            <div class="map-header">
+                                <span>Live Location: ${p.name}</span>
+                                <button class="btn btn-sm btn-secondary" ${hasLocationDevice ? '' : 'disabled'} onclick="refreshParticipantMap('${p.participant_id}', '${primaryDeviceId}')"><i style="margin-right: 5px;" class="fas fa-sync-alt"></i> Refresh</button>
+                            </div>
+                            <div id="map-${p.participant_id}" class="participant-map"></div>
+                            <div id="map-info-${p.participant_id}" class="map-info"></div>
                         </div>
-                        <div id="map-${p.participant_id}" class="participant-map"></div>
-                        <div id="map-info-${p.participant_id}" class="map-info"></div>
-                    </div>
-                </td>
-            </tr>
-        `).join('');
+                    </td>
+                </tr>
+            `;
+        }).join('');
     }
 
     // ---- INDIVIDUAL PARTICIPANT MAP FUNCTIONALITY ----
@@ -469,6 +1003,7 @@
     async function loadAlertsList(filter = 'all') {
         if (state.loadingAlerts) return;
         state.loadingAlerts = true;
+        const writeAllowed = canWriteAdminData();
         const container = document.getElementById('alerts-list');
         if (!container) {
             state.loadingAlerts = false;
@@ -487,6 +1022,7 @@
         const participantFilter = participantFilterSelect ? participantFilterSelect.value : 'all';
         const limitFilterSelect = document.getElementById('alert-limit-filter');
         const alertLimit = limitFilterSelect ? limitFilterSelect.value : '10000';
+        persistAlertFilterState({ status: filter, source: sourceFilter, participant: participantFilter, limit: alertLimit }, getCurrentPresetId());
 
         let endpoint = '/alerts';
         if (filter === 'active') {
@@ -501,7 +1037,7 @@
 
         let alerts = [
             ...(geofenceAlerts || []).map(a => ({ ...a, alert_type: 'geofence', source_type: 'phone' })),
-            ...(signatureAlerts || []).map(a => ({ ...a, alert_type: 'signature', source_type: getAlertSource(a) }))
+            ...(signatureAlerts || []).map(a => ({ ...a, alert_type: 'signature', source_type: (a.source_type || getAlertSource(a)) }))
         ];
 
         // Determine acknowledged status consistently
@@ -525,7 +1061,7 @@
             filteredAlerts = alerts.filter(a => !isAck(a));
         }
         if (sourceFilter !== 'all') {
-            filteredAlerts = filteredAlerts.filter(a => (a.source_type || getAlertSource(a)) === sourceFilter);
+            filteredAlerts = filteredAlerts.filter(a => ((a.source_type || getAlertSource(a) || '').toLowerCase()) === sourceFilter);
         }
         if (participantFilter !== 'all') {
             filteredAlerts = filteredAlerts.filter(a => (a.participant_id || a.participant_name || 'Unknown Participant') === participantFilter);
@@ -555,7 +1091,7 @@
 
         const participantGroups = Array.from(participantIds).map(participantId => {
             const participantAlerts = groupedAlerts.get(participantId) || [];
-            const latestTs = participantAlerts.length > 0 ? sortTs(participantAlerts[0]) : 0;
+            const latestTs = participantAlerts.length > 0 ? alertTimestampValue(participantAlerts[0]) : 0;
             return [participantId, participantAlerts, latestTs];
         }).sort((a, b) => {
             if ((b[1] || []).length !== (a[1] || []).length) {
@@ -571,12 +1107,25 @@
         }
 
         container.innerHTML = participantGroups.map(([participantId, participantAlerts]) => {
-            const phoneCount = participantAlerts.filter(alert => (alert.source_type || getAlertSource(alert)) === 'phone').length;
-            const watchCount = participantAlerts.filter(alert => (alert.source_type || getAlertSource(alert)) === 'watch').length;
+            const phoneCount = participantAlerts.filter(alert => {
+                const source = (alert.source_type || getAlertSource(alert) || '').toLowerCase();
+                return source === 'phone' || source === 'both';
+            }).length;
+            const watchCount = participantAlerts.filter(alert => {
+                const source = (alert.source_type || getAlertSource(alert) || '').toLowerCase();
+                return source === 'watch' || source === 'both';
+            }).length;
+            const participantKey = String(participantId);
+            const defaultExpanded = participantFilter !== 'all';
+            const isExpanded = state.alertGroupExpanded[participantKey] !== undefined
+                ? !!state.alertGroupExpanded[participantKey]
+                : defaultExpanded;
+            const groupDomId = participantGroupDomId(participantKey);
+            const density = buildAlertDensitySparkline(participantAlerts, 12);
             const participantBody = participantAlerts.map(alert => {
                 const isGeofence = alert.alert_type === 'geofence';
                 const isSignature = alert.alert_type === 'signature';
-                const sourceType = alert.source_type || getAlertSource(alert);
+                const sourceType = (alert.source_type || getAlertSource(alert) || 'phone').toLowerCase();
 
                 const title = isGeofence
                     ? `Geofence Breach: ${alert.zone_name || 'Red Zone'}`
@@ -595,27 +1144,33 @@
                 }
 
                 const acknowledged = isSignature ? !!alert.acknowledged_at : !!alert.acknowledged;
+                const severityLevel = normalizeSeverity(alert, acknowledged);
+                const severityLabel = severityLevel === 'ack' ? 'ACK' : severityLevel.toUpperCase();
                 const ackText = acknowledged ? `| Acknowledged by ${alert.acknowledged_by || ''}` : '';
 
                 const ackBtn = (!acknowledged)
-                    ? (isGeofence
+                    ? (writeAllowed && isGeofence
                         ? `<button class="btn btn-primary alert-ack-btn" onclick="acknowledgeAlert('${alert.alert_id}')"><i class="fas fa-check"></i><span>Acknowledge</span></button>`
-                        : `<button class="btn btn-primary alert-ack-btn" onclick="acknowledgeSignatureAlert(${alert.id})"><i class="fas fa-check"></i><span>Acknowledge</span></button>`
+                        : (writeAllowed
+                            ? `<button class="btn btn-primary alert-ack-btn" onclick="acknowledgeSignatureAlert(${alert.id})"><i class="fas fa-check"></i><span>Acknowledge</span></button>`
+                            : '')
                     )
                     : '';
 
                 const shownTime = isSignature
                     ? (alert.created_at || alert.hour_start)
                     : alert.triggered_at;
+                const baselineDiffHtml = buildBaselineDiffHtml(alert);
 
                 return `
-                <div class="alert-item ${acknowledged ? 'info' : 'critical'}">
-                    <div class="alert-icon">${acknowledged ? '<i class="fas fa-check"></i>' : '<i class="fas fa-exclamation"></i>'}</div>
+                <div class="alert-item severity-${severityLevel}">
+                    <div class="alert-icon">${acknowledged ? '<i class="fas fa-check-circle"></i>' : '<i class="fas fa-exclamation-circle"></i>'}</div>
                     <div class="alert-content">
-                        <div class="alert-title">${title}</div>
+                        <div class="alert-title">${title} <span class="severity-pill severity-${severityLevel}">${severityLabel}</span></div>
                         <div class="alert-description">${desc}</div>
+                        ${baselineDiffHtml}
                         <div class="alert-meta">
-                            <span class="alert-source-badge ${sourceType}">${sourceType === 'watch' ? 'Watch' : 'Phone'}</span>
+                            <span class="alert-source-badge ${sourceType}">${sourceType === 'watch' ? 'Watch' : (sourceType === 'both' ? 'Phone + Watch' : 'Phone')}</span>
                             ${formatTimestamp(shownTime, isSignature)} ${acknowledged ? ackText : ''}
                         </div>
                     </div>
@@ -632,14 +1187,21 @@
 
             return `
                 <div class="participant-alert-group">
-                    <div class="participant-alert-header">
-                        <div class="participant-alert-title">${participantId}</div>
+                    <div class="participant-alert-header ${isExpanded ? 'expanded' : 'collapsed'}" onclick="toggleParticipantAlertGroup('${participantKey.replace(/'/g, "\\'")}')">
+                        <div class="participant-alert-title-wrap">
+                            <button class="participant-alert-toggle" type="button">
+                                <i class="fas ${isExpanded ? 'fa-chevron-down' : 'fa-chevron-right'}" id="participant-alert-toggle-icon-${groupDomId}"></i>
+                            </button>
+                            <div class="participant-alert-title">${participantId}</div>
+                            <span class="alert-count-chip total">${participantAlerts.length}</span>
+                            <div class="participant-alert-density" title="Recent alert density">${density.barsHtml}</div>
+                        </div>
                         <div class="participant-alert-count">
-                            ${participantAlerts.length} alert${participantAlerts.length === 1 ? '' : 's'}
-                            <span class="participant-alert-breakdown">Phone: ${phoneCount} | Watch: ${watchCount}</span>
+                            <span class="alert-count-chip phone">Phone ${phoneCount}</span>
+                            <span class="alert-count-chip watch">Watch ${watchCount}</span>
                         </div>
                     </div>
-                    <div class="participant-alert-body">
+                    <div class="participant-alert-body ${isExpanded ? '' : 'hidden'}" id="participant-alert-body-${groupDomId}">
                         ${participantBody}
                     </div>
                 </div>
@@ -647,6 +1209,22 @@
         }).join('');
         state.loadingAlerts = false;
     }
+
+    window.toggleParticipantAlertGroup = function (participantId) {
+        const key = String(participantId || '');
+        if (!key) return;
+        const current = !!state.alertGroupExpanded[key];
+        state.alertGroupExpanded[key] = !current;
+
+        const groupDomId = participantGroupDomId(key);
+        const body = document.getElementById(`participant-alert-body-${groupDomId}`);
+        const icon = document.getElementById(`participant-alert-toggle-icon-${groupDomId}`);
+        if (body) body.classList.toggle('hidden', current);
+        if (icon) {
+            icon.classList.toggle('fa-chevron-right', current);
+            icon.classList.toggle('fa-chevron-down', !current);
+        }
+    };
 
     function startAlertsLiveRefresh() {
         if (state.alertsLiveInterval) return;
@@ -664,6 +1242,8 @@
     }
 
     function getAlertSource(alert) {
+        const explicit = (alert?.source_type || '').toLowerCase();
+        if (explicit === 'phone' || explicit === 'watch' || explicit === 'both') return explicit;
         if (alert.alert_type === 'geofence') return 'phone';
         const code = (alert.alert_code || '').toUpperCase();
         if (code.startsWith('W')) return 'watch';
@@ -697,6 +1277,10 @@
 
     // Global function for acknowledge geofence alert button
     window.acknowledgeAlert = async function (alertId) {
+        if (!canWriteAdminData()) {
+            alert('Your role is read-only. Alert acknowledgment is disabled.');
+            return;
+        }
         const username = sessionStorage.getItem('dp_ids_user') || 'admin';
         const result = await apiPost(`/alerts/${alertId}/acknowledge?by=${username}`, {});
         if (result && result.ok) {
@@ -709,6 +1293,10 @@
 
     // Global function for acknowledge SIGNATURE alert button
     window.acknowledgeSignatureAlert = async function (id) {
+        if (!canWriteAdminData()) {
+            alert('Your role is read-only. Alert acknowledgment is disabled.');
+            return;
+        }
         const username = sessionStorage.getItem('dp_ids_user') || 'admin';
         const result = await apiPost(`/signature-alerts/${id}/acknowledge?by=${username}`, {});
         if (result && result.ok) {
@@ -722,13 +1310,22 @@
     window.openParticipantModal = function (participantId) {
         const participant = state.participants.find(p => p.participant_id === participantId);
         if (!participant) return;
+        const writeAllowed = canWriteAdminData();
 
+        const primaryDeviceId = participant.phone_device_id || participant.watch_device_id || participant.device_id || '';
         document.getElementById('modal-participant-id').value = participant.participant_id;
         document.getElementById('modal-participant-name').value = participant.name;
-        document.getElementById('modal-device-id').value = participant.device_id;
+        document.getElementById('modal-device-id').value = primaryDeviceId;
         document.getElementById('modal-red-zone-radius').value = participant.red_zone_radius || 300;
         document.getElementById('modal-risk-level').value = participant.risk_level || 'low';
         document.getElementById('modal-status').value = participant.status || 'active';
+
+        document.getElementById('modal-participant-name').disabled = !writeAllowed;
+        document.getElementById('modal-red-zone-radius').disabled = !writeAllowed;
+        document.getElementById('modal-risk-level').disabled = !writeAllowed;
+        document.getElementById('modal-status').disabled = !writeAllowed;
+        const saveButton = document.getElementById('modal-save-participant-btn');
+        if (saveButton) saveButton.style.display = writeAllowed ? '' : 'none';
 
         document.getElementById('participant-modal').classList.remove('hidden');
     };
@@ -738,6 +1335,10 @@
     };
 
     window.saveParticipant = async function () {
+        if (!canWriteAdminData()) {
+            alert('Your role is read-only. Participant updates are disabled.');
+            return;
+        }
         const participantId = document.getElementById('modal-participant-id').value;
         const data = {
             participant_id: participantId,
@@ -747,6 +1348,10 @@
             risk_level: document.getElementById('modal-risk-level').value,
             status: document.getElementById('modal-status').value
         };
+
+        if (!data.device_id) {
+            delete data.device_id;
+        }
 
         const result = await apiPost('/participants', data);
         if (result) {
@@ -763,6 +1368,7 @@
 
         document.getElementById('zones-participant-id').value = participantId;
         document.getElementById('zones-participant-info').textContent = `Managing red zones for: ${participant.name}`;
+        applyZonesModalPermissions();
 
         await loadZonesTable(participantId);
 
@@ -776,6 +1382,7 @@
     async function loadZonesTable(participantId) {
         const tbody = document.getElementById('zones-table');
         if (!tbody) return;
+        const writeAllowed = canWriteAdminData();
 
         const zones = await apiGet(`/zones?participant_id=${participantId}`);
 
@@ -791,13 +1398,25 @@
                 <td>${zone.radius}m</td>
                 <td><span class="risk-badge risk-${zone.zone_type === 'bar' || zone.zone_type === 'dealer' ? 'high' : 'moderate'}">${zone.zone_type}</span></td>
                 <td>
-                    <button class="btn btn-sm btn-danger" onclick="deleteRedZone('${zone.zone_id}')"><i style="margin-right: 5px;" class="fas fa-trash"></i> Delete</button>
+                    ${writeAllowed ? `<button class="btn btn-sm btn-danger" onclick="deleteRedZone('${zone.zone_id}')"><i style="margin-right: 5px;" class="fas fa-trash"></i> Delete</button>` : '<span style="color:#888;">Read-only</span>'}
                 </td>
             </tr>
         `).join('');
     }
 
+    function applyZonesModalPermissions() {
+        const writeAllowed = canWriteAdminData();
+        const addZoneCard = document.getElementById('add-zone-card');
+        if (addZoneCard) addZoneCard.style.display = writeAllowed ? '' : 'none';
+        const readonlyNote = document.getElementById('zones-readonly-note');
+        if (readonlyNote) readonlyNote.classList.toggle('hidden', writeAllowed);
+    }
+
     window.addRedZone = async function () {
+        if (!canWriteAdminData()) {
+            alert('Your role is read-only. Red zone changes are disabled.');
+            return;
+        }
         const participantId = document.getElementById('zones-participant-id').value;
         const data = {
             participant_id: participantId,
@@ -827,12 +1446,16 @@
     };
 
     window.deleteRedZone = async function (zoneId) {
+        if (!canWriteAdminData()) {
+            alert('Your role is read-only. Red zone changes are disabled.');
+            return;
+        }
         if (!confirm('Are you sure you want to delete this red zone?')) return;
 
         const participantId = document.getElementById('zones-participant-id').value;
-        const result = await fetch(`${API_BASE}/zones/${zoneId}`, { method: 'DELETE' });
+        const result = await apiDelete(`/zones/${zoneId}`);
 
-        if (result.ok) {
+        if (result && result.ok) {
             await loadZonesTable(participantId);
         }
     };
@@ -850,27 +1473,56 @@
             return;
         }
 
-        tbody.innerHTML = participants.map(p => {
-            const batteryStr = p.percentage !== null && p.percentage !== undefined
-                ? `${Math.round(p.percentage)}% (${p.charging_status || 'unknown'})`
+        const flattened = [];
+        const seen = new Set();
+
+        participants.forEach(p => {
+            const fallbackDevices = [];
+            if (p.phone_device_id) fallbackDevices.push({ device_id: p.phone_device_id, device_type: 'phone' });
+            if (p.watch_device_id && p.watch_device_id !== p.phone_device_id) fallbackDevices.push({ device_id: p.watch_device_id, device_type: 'watch' });
+            if ((!p.phone_device_id && !p.watch_device_id) && p.device_id) fallbackDevices.push({ device_id: p.device_id, device_type: (p.source_type || 'unknown') });
+
+            const devices = Array.isArray(p.devices) && p.devices.length > 0 ? p.devices : fallbackDevices;
+            devices.forEach(device => {
+                const deviceId = device?.device_id;
+                if (!deviceId || seen.has(deviceId)) return;
+                seen.add(deviceId);
+                const deviceType = (device?.device_type || p.source_type || 'unknown').toLowerCase();
+                flattened.push({
+                    participant_id: p.participant_id,
+                    participant_name: p.name,
+                    device_id: deviceId,
+                    device_type: deviceType,
+                    status: p.status,
+                    updated_at: p.updated_at,
+                    battery_percentage: deviceType === 'phone' ? p.percentage : null,
+                    charging_status: deviceType === 'phone' ? p.charging_status : null,
+                });
+            });
+        });
+
+        if (flattened.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:#888;">No devices registered</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = flattened.map(d => {
+            const batteryStr = d.battery_percentage !== null && d.battery_percentage !== undefined
+                ? `${Math.round(d.battery_percentage)}% (${d.charging_status || 'unknown'})`
                 : '--';
-            const sourceType = (p.source_type || 'unknown').toLowerCase();
-            const sourceLabel = sourceType === 'both'
-                ? 'Phone + Watch'
-                : (sourceType === 'watch' ? 'Watch' : (sourceType === 'phone' ? 'Phone' : 'Unknown'));
-            const sourceBadgeClass = sourceType === 'both'
-                ? 'both'
-                : (sourceType === 'watch' ? 'watch' : 'phone');
+            const sourceType = (d.device_type || 'unknown').toLowerCase();
+            const sourceLabel = sourceType === 'watch' ? 'Watch' : (sourceType === 'phone' ? 'Phone' : 'Unknown');
+            const sourceBadgeClass = sourceType === 'watch' ? 'watch' : 'phone';
 
             return `
                 <tr>
-                    <td><code>${p.device_id}</code></td>
-                    <td>${p.name}</td>
+                    <td><code>${d.device_id}</code></td>
+                    <td>${d.participant_name || d.participant_id}</td>
                     <td><span class="alert-source-badge ${sourceBadgeClass}">${sourceLabel}</span></td>
-                    <td>${formatTimestamp(p.updated_at) || 'Unknown'}</td>
-                    <td id="battery-${p.device_id}">${batteryStr}</td>
+                    <td>${formatTimestamp(d.updated_at) || 'Unknown'}</td>
+                    <td id="battery-${d.device_id}">${batteryStr}</td>
                     <td>8</td>
-                    <td><span class="status-badge status-${p.status === 'active' ? 'active' : 'inactive'}">${p.status}</span></td>
+                    <td><span class="status-badge status-${d.status === 'active' ? 'active' : 'inactive'}">${d.status}</span></td>
                 </tr>
             `;
         }).join('');
@@ -945,27 +1597,200 @@
 
     // ---- USERS TABLE ----
 
-    function loadUsersTable() {
+    async function loadUsersTable() {
         const tbody = document.getElementById('users-table');
         if (!tbody) return;
 
-        const users = [
-            { username: 'admin', role: 'Administrator', email: 'admin@clinic.org', lastLogin: 'Just now', status: 'active' }
-        ];
+        const users = await apiGet('/users');
+        if (!users || !Array.isArray(users)) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:#888;">Failed to load users</td></tr>';
+            return;
+        }
+
+        if (users.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:#888;">No users found</td></tr>';
+            return;
+        }
 
         tbody.innerHTML = users.map(user => `
             <tr>
                 <td>${user.username}</td>
-                <td>${user.role}</td>
-                <td>${user.email}</td>
-                <td>${user.lastLogin}</td>
+                <td>${String(user.role || '').toUpperCase()}</td>
+                <td>${user.email || ''}</td>
+                <td>${formatTimestamp(user.last_login_at || user.created_at || user.updated_at)}</td>
                 <td><span class="status-badge status-${user.status}">${user.status}</span></td>
                 <td>
-                    <button class="btn btn-sm btn-secondary">Edit</button>
+                    <button class="btn btn-sm btn-secondary" onclick="window.editUser('${user.username}')">Edit</button>
                 </td>
             </tr>
         `).join('');
     }
+
+    window.editUser = async function (username) {
+        const role = (sessionStorage.getItem(AUTH_ROLE_STORAGE) || '').toLowerCase();
+        if (role !== 'admin') {
+            alert('Only admin users can edit users.');
+            return;
+        }
+        const newRole = (window.prompt('Role (admin/analyst/viewer/doctor/ingest)', 'viewer') || '').trim().toLowerCase();
+        if (!newRole) return;
+        const status = (window.prompt('Status (active/inactive)', 'active') || '').trim().toLowerCase();
+        if (!status) return;
+        const password = window.prompt('New password (leave empty to keep current)', '') || '';
+        const result = await apiPost('/users', { username, role: newRole, status, password });
+        if (result && result.ok) {
+            await loadUsersTable();
+            alert('User updated.');
+        } else {
+            alert('Failed to update user.');
+        }
+    };
+
+    async function handleAddUser() {
+        const role = (sessionStorage.getItem(AUTH_ROLE_STORAGE) || '').toLowerCase();
+        if (role !== 'admin') {
+            alert('Only admin users can add users.');
+            return;
+        }
+        const username = (window.prompt('Username') || '').trim();
+        if (!username) return;
+        const password = window.prompt('Password') || '';
+        if (!password) {
+            alert('Password is required.');
+            return;
+        }
+        const newRole = (window.prompt('Role (admin/analyst/viewer/doctor/ingest)', 'viewer') || 'viewer').trim().toLowerCase();
+        const email = (window.prompt('Email (optional)', '') || '').trim();
+        const fullName = (window.prompt('Full name (optional)', '') || '').trim();
+        const result = await apiPost('/users', {
+            username,
+            password,
+            role: newRole,
+            email,
+            full_name: fullName,
+            status: 'active'
+        });
+        if (result && result.ok) {
+            await loadUsersTable();
+            alert('User created.');
+        } else {
+            alert('Failed to create user.');
+        }
+    }
+
+    // ---- ADMIN CONTROL PANEL ----
+
+    async function loadAdminControlPanel() {
+        const role = (sessionStorage.getItem(AUTH_ROLE_STORAGE) || '').toLowerCase();
+        if (role !== 'admin') return;
+
+        const [status, sessions, lockouts, audit] = await Promise.all([
+            apiGet('/admin/security-status'),
+            apiGet('/admin/sessions?limit=200'),
+            apiGet('/admin/login-lockouts?limit=100'),
+            apiGet('/admin/audit?limit=200')
+        ]);
+
+        renderSecurityStatus(status);
+        renderActiveSessions(sessions);
+        renderLoginLockouts(lockouts);
+        renderSecurityAudit(audit);
+    }
+
+    function renderSecurityStatus(status) {
+        const minLengthInput = document.getElementById('security-password-min-length');
+        const lockoutPolicyInput = document.getElementById('security-lockout-policy');
+        const summaryInput = document.getElementById('security-status-summary');
+        if (!minLengthInput || !lockoutPolicyInput || !summaryInput) return;
+
+        if (!status || !status.password_policy || !status.auth_policy) {
+            minLengthInput.value = 'Unavailable';
+            lockoutPolicyInput.value = 'Unavailable';
+            summaryInput.value = 'Unavailable';
+            return;
+        }
+
+        const pp = status.password_policy || {};
+        const ap = status.auth_policy || {};
+        minLengthInput.value = String(pp.min_length || '');
+        lockoutPolicyInput.value =
+            `${ap.max_failed_attempts || ''} failed in ${ap.attempt_window_minutes || ''}m -> ${ap.lockout_minutes || ''}m lock`;
+        summaryInput.value =
+            `${status.active_users || 0} users / ${status.active_sessions || 0} sessions / ${status.locked_accounts || 0} locked`;
+    }
+
+    function renderActiveSessions(sessions) {
+        const tbody = document.getElementById('admin-sessions-table');
+        if (!tbody) return;
+        if (!Array.isArray(sessions) || sessions.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:#888;">No active sessions</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = sessions.map(s => `
+            <tr>
+                <td>${s.id}</td>
+                <td>${s.username || ''}</td>
+                <td>${String(s.role || '').toUpperCase()}</td>
+                <td>${s.client_ip || ''}</td>
+                <td>${formatTimestamp(s.last_seen_at || s.created_at)}</td>
+                <td>${formatTimestamp(s.expires_at)}</td>
+                <td><button class="btn btn-sm btn-danger" onclick="window.revokeAuthSession(${s.id})">Revoke</button></td>
+            </tr>
+        `).join('');
+    }
+
+    function renderLoginLockouts(lockouts) {
+        const tbody = document.getElementById('admin-lockouts-table');
+        if (!tbody) return;
+        if (!Array.isArray(lockouts) || lockouts.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#888;">No lockouts</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = lockouts.map(l => `
+            <tr>
+                <td>${l.username || ''}</td>
+                <td>${l.failed_count || 0}</td>
+                <td>${l.last_ip || ''}</td>
+                <td>${formatTimestamp(l.locked_until)}</td>
+                <td>${formatTimestamp(l.last_failed_at)}</td>
+            </tr>
+        `).join('');
+    }
+
+    function renderSecurityAudit(events) {
+        const tbody = document.getElementById('admin-audit-table');
+        if (!tbody) return;
+        if (!Array.isArray(events) || events.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#888;">No audit events</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = events.map(e => `
+            <tr>
+                <td>${formatTimestamp(e.event_at)}</td>
+                <td>${e.actor || ''}</td>
+                <td>${e.action || ''}</td>
+                <td>${e.target_type || ''}:${e.target_id || ''}</td>
+            </tr>
+        `).join('');
+    }
+
+    window.revokeAuthSession = async function (id) {
+        const role = (sessionStorage.getItem(AUTH_ROLE_STORAGE) || '').toLowerCase();
+        if (role !== 'admin') {
+            alert('Only admin users can revoke sessions.');
+            return;
+        }
+        if (!id) return;
+        const result = await apiPost(`/admin/sessions/${id}/revoke`, {});
+        if (result && result.ok) {
+            await loadAdminControlPanel();
+        } else {
+            alert('Failed to revoke session.');
+        }
+    };
 
     // ---- UTILITY FUNCTIONS ----
 

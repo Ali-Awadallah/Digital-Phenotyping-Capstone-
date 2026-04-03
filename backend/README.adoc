@@ -78,6 +78,8 @@ Schema Startup Order
 
 Use this order when another teammate clones the project and needs a reproducible local setup.
 
+No bootstrap script is required. Tables are auto-created/migrated by backend startup.
+
 1. Start all services
 +
 ----
@@ -96,3 +98,141 @@ What creates which tables
   - creates/migrates all required tables on startup (source of truth)
 - `signature_engine`
   - consumes the schema and processes incoming data
+
+Default out-of-box credentials are now:
+
+- backend DB user: `aware_user` / `password`
+- signature engine DB user: `aware_user` / `password`
+
+These are auto-created by the MySQL container init (`MYSQL_USER`, `MYSQL_PASSWORD`) and work on a fresh teammate machine.
+
+------
+
+API Key Security (Current)
+
+`/api/*` endpoints are protected by API keys when configured.
+
+- Ingest key (`API_KEY_INGEST`): for phone/watch sensor ingestion endpoints.
+- Admin key (`API_KEY_ADMIN`): for admin/dashboard endpoints (`/api/participants`, `/api/zones`, `/api/alerts`, `/api/signature-alerts`).
+
+Send key in one of:
+
+- `X-API-Key: <key>`
+- `Authorization: Bearer <key>`
+- query param `?api_key=<key>`
+
+Examples:
+
+```bash
+curl -X POST "http://localhost:8080/api/accelerometer" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <INGEST_KEY>" \
+  -d '{"device_id":"demo-phone","ts":1732300000000,"x":0.1,"y":-0.1,"z":9.81}'
+```
+
+```bash
+curl "http://localhost:8080/api/signature-alerts?active=true&limit=100&api_key=<ADMIN_KEY>"
+```
+
+Dashboard note:
+
+- Dashboard now prompts for Admin API key on login and stores it in browser local storage (`dp_ids_admin_api_key`).
+- You can also open dashboard with `?admin_api_key=<ADMIN_KEY>` once to seed the key.
+
+Mobile app note:
+
+- In the React Native app, open Settings and set `Ingest API Key` to match backend `API_KEY_INGEST`.
+- The key is synced to native background sender and attached to phone/watch sensor requests (`X-API-Key` + JSON body fallback `api_key`).
+
+Rotate keys quickly:
+
+----
+cd backend
+python rotate_keys.py
+----
+
+Windows one-click:
+
+----
+cd backend
+rotate_keys.bat
+----
+
+---
+
+Dashboard Login + RBAC
+
+The dashboard now uses backend credentials and role-based access control.
+
+Startup creates:
+
+- `app_users` (credential store with hashed passwords)
+- `auth_sessions` (session tokens)
+
+Default admin account is auto-created if missing:
+
+- `APP_ADMIN_USERNAME` (default `admin`)
+- `APP_ADMIN_PASSWORD` (default `capstone`)
+
+Default doctor account is also auto-created if missing:
+
+- `APP_DOCTOR_USERNAME` (default `doctor`)
+- `APP_DOCTOR_PASSWORD` (default `Doctor@12345`)
+
+Set these in `backend/.env` before deployment.
+
+Roles:
+
+- `admin`: full access, user management
+- `analyst`: write access to operational admin APIs except user management
+- `viewer`: read-only access to admin APIs
+- `doctor`: read-only access to operational APIs (participants/alerts/zones/signatures/devices via participants endpoints), without users/settings/admin security access
+- `ingest`: sensor ingestion only
+
+Session login endpoint:
+
+```bash
+curl -X POST "http://localhost:8080/api/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"capstone"}'
+```
+
+Use returned token in API calls:
+
+```bash
+curl "http://localhost:8080/api/auth/me" \
+  -H "Authorization: Bearer <SESSION_TOKEN>"
+```
+
+Login hardening:
+
+- Failed login throttling/lockout is enabled (`AUTH_ATTEMPT_WINDOW_MINUTES`, `AUTH_MAX_FAILED_ATTEMPTS`, `AUTH_LOCKOUT_MINUTES`).
+- Password policy is enforced for user creation/updates (`PASSWORD_*` env vars in `.env.example`).
+
+Admin control panel APIs (admin role):
+
+- `GET /api/admin/security-status`
+- `GET /api/admin/sessions`
+- `POST /api/admin/sessions/:id/revoke`
+- `GET /api/admin/login-lockouts`
+- `GET /api/admin/audit`
+
+Secrets from file (secret-manager ready):
+
+- Any secret env can be provided as `*_FILE`.
+- Implemented for:
+  - `API_KEY_INGEST`, `API_KEY_ADMIN`
+  - `DATA_ENCRYPTION_KEY_B64`
+  - `APP_ADMIN_PASSWORD`
+  - `DATABASE_PASSWORD`
+
+Least-privilege DB users:
+
+- SQL setup file: `backend/mysql/least_privilege.sql`
+- Apply it with root:
+```bash
+Get-Content -Raw backend/mysql/least_privilege.sql | docker exec -i dp-mysql mysql -uroot -prootpassword
+```
+- Configure app users in `.env`:
+  - `DATABASE_USER` / `DATABASE_PASSWORD` (backend)
+  - `SIGNATURE_DB_USER` / `SIGNATURE_DB_PASSWORD` (signature engine)
