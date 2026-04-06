@@ -646,12 +646,13 @@ The backend exposes a REST API on port 8080. Base URL: `http://<host>:8080/api`
 - **Dr. Awad Mussa** -- Cybersecurity Department, CCIT, UDST
 
 ### Team Members
-- **Ali Awadallah** -- Team Leader
-- Abdalwahab Eltahir
-- Abdulrahman Babkir
-- Bara Al-Omari
-- Diya Alghuniem
-- Mumin Almaghrabi
+- **Ali Awadallah** (Data & Cyber Security)  -- Team Leader
+- Abdalwahab Eltahir (Information Systems)
+- Abdulrahman Babkir (Data & Cyber Security)
+- Bara Al-Omari (Information Systems)
+- Diya Alghuniem (Data & Cyber Security)
+- Mumin Almaghrabi (Data & AI)
+- Abdulaziz Al-Malki (Information Technology) 
 
 ---
 
@@ -661,7 +662,9 @@ This project is for academic and research purposes at the University of Doha for
 
 ---
 
-**Contact:** 60301637@udst.edu.qa (Ali Awadallah)
+**Contact:** 
+60107679@udst.edu.qa (Dr. Sami Zhioua)
+60301637@udst.edu.qa (Ali Awadallah)
 
 <div align="center">
   <sub>&copy; 2025-2026 College of Computing and IT, University of Doha for Science and Technology</sub>
